@@ -1,0 +1,17 @@
+# Overrides aplicados apenas durante os testes
+spring:
+  datasource:
+    password: test  # substituído pelo Testcontainers via DynamicPropertySource
+
+app:
+  cors:
+    allowed-origins: http://localhost:5173
+  jwt:
+    secret: test-jwt-secret-para-testes-unitarios-e-integracao-padding
+    expiration: 86400000
+  export:
+    dir: ${java.io.tmpdir}/acadflow/exports-test
+  rate-limit:
+    max-requests: 1000
+    window-ms: 60000
+    trust-proxy: false

@@ -1,0 +1,563 @@
+# =============================================================================
+# AcadFlow AI — Coleção de testes manuais HTTP — Fase 1
+# =============================================================================
+# Pré-requisito: VS Code REST Client (extensão humao.rest-client)
+#
+# ORDEM DE EXECUÇÃO:
+#   1. POST /auth/register   → cria o usuário
+#   2. POST /auth/login      → obtém o token JWT
+#   3. GET  /me              → valida o token
+#   4. POST /projects        → cria um projeto (anota o projectId)
+#   5. GET  /projects        → lista todos os projetos
+#   6. GET  /projects/{id}/details → detalhes + capítulos gerados
+#   7. GET  /chapters?projectId=   → lista capítulos do projeto
+#   8. PATCH /chapters/{id}        → atualiza conteúdo de um capítulo
+#
+# Após executar o login, copie o token e substitua @token abaixo.
+# =============================================================================
+
+@baseUrl = http://localhost:8080
+@contentType = application/json
+
+# Cole o token JWT obtido no login
+@token = SEU_TOKEN_AQUI
+
+# Cole os IDs obtidos nas respostas
+@projectId = SEU_PROJECT_ID_AQUI
+@chapterId = SEU_CHAPTER_ID_AQUI
+
+
+# =============================================================================
+# 1. REGISTRO — POST /auth/register
+# =============================================================================
+# Cadastra um novo usuário.
+# Campos obrigatórios: name, email, password (mín. 8 chars)
+# Resposta esperada: 201 Created
+# =============================================================================
+
+### [1] Registro — sucesso
+POST {{baseUrl}}/auth/register
+Content-Type: {{contentType}}
+
+{
+  "name": "Francisco Costa",
+  "email": "francisco@acadflow.com",
+  "password": "senha@123"
+}
+
+###
+# Resposta esperada — 201 Created
+# {
+#   "success": true,
+#   "message": "Cadastro realizado com sucesso",
+#   "data": {
+#     "token": "eyJhbGciOiJIUzI1NiJ9...",
+#     "user": {
+#       "id": "550e8400-e29b-41d4-a716-446655440000",
+#       "name": "Francisco Costa",
+#       "email": "francisco@acadflow.com",
+#       "role": "STUDENT",
+#       "plan": "FREE",
+#       "createdAt": "2026-05-03T10:00:00"
+#     }
+#   }
+# }
+
+### [1B] Registro — e-mail duplicado (erro esperado)
+POST {{baseUrl}}/auth/register
+Content-Type: {{contentType}}
+
+{
+  "name": "Francisco Costa",
+  "email": "francisco@acadflow.com",
+  "password": "senha@123"
+}
+
+###
+# Resposta esperada — 400 Bad Request
+# {
+#   "success": false,
+#   "message": "E-mail já cadastrado",
+#   "data": null
+# }
+
+### [1C] Registro — validação de campos obrigatórios (erro esperado)
+POST {{baseUrl}}/auth/register
+Content-Type: {{contentType}}
+
+{
+  "name": "",
+  "email": "email-invalido",
+  "password": "curta"
+}
+
+###
+# Resposta esperada — 400 Bad Request
+# {
+#   "success": false,
+#   "message": "Erro de validação",
+#   "data": {
+#     "name": "Nome é obrigatório",
+#     "email": "E-mail inválido",
+#     "password": "Senha deve ter no mínimo 8 caracteres"
+#   }
+# }
+
+
+# =============================================================================
+# 2. LOGIN — POST /auth/login
+# =============================================================================
+# Autentica o usuário e retorna o token JWT (válido por 24h).
+# IMPORTANTE: copie o token da resposta e cole em @token no topo do arquivo.
+# Resposta esperada: 200 OK
+# =============================================================================
+
+### [2] Login — sucesso
+POST {{baseUrl}}/auth/login
+Content-Type: {{contentType}}
+
+{
+  "email": "francisco@acadflow.com",
+  "password": "senha@123"
+}
+
+###
+# Resposta esperada — 200 OK
+# {
+#   "success": true,
+#   "message": "Login realizado com sucesso",
+#   "data": {
+#     "token": "eyJhbGciOiJIUzI1NiJ9...",
+#     "user": {
+#       "id": "550e8400-e29b-41d4-a716-446655440000",
+#       "name": "Francisco Costa",
+#       "email": "francisco@acadflow.com",
+#       "role": "STUDENT",
+#       "plan": "FREE",
+#       "createdAt": "2026-05-03T10:00:00"
+#     }
+#   }
+# }
+
+### [2B] Login — credenciais inválidas (erro esperado)
+POST {{baseUrl}}/auth/login
+Content-Type: {{contentType}}
+
+{
+  "email": "francisco@acadflow.com",
+  "password": "senhaErrada"
+}
+
+###
+# Resposta esperada — 401 Unauthorized
+# {
+#   "success": false,
+#   "message": "Credenciais inválidas",
+#   "data": null
+# }
+
+### [2C] Login — sem autenticação em rota protegida (erro esperado)
+GET {{baseUrl}}/me
+
+###
+# Resposta esperada — 403 Forbidden (Spring Security bloqueia sem token)
+# {
+#   "success": false,
+#   "message": "Acesso negado",
+#   "data": null
+# }
+
+
+# =============================================================================
+# 3. PERFIL — GET /me
+# =============================================================================
+# Retorna os dados do usuário autenticado pelo token.
+# Header obrigatório: Authorization: Bearer <token>
+# Resposta esperada: 200 OK
+# =============================================================================
+
+### [3] Perfil do usuário autenticado — sucesso
+GET {{baseUrl}}/me
+Authorization: Bearer {{token}}
+
+###
+# Resposta esperada — 200 OK
+# {
+#   "success": true,
+#   "message": "OK",
+#   "data": {
+#     "id": "550e8400-e29b-41d4-a716-446655440000",
+#     "name": "Francisco Costa",
+#     "email": "francisco@acadflow.com",
+#     "role": "STUDENT",
+#     "plan": "FREE",
+#     "createdAt": "2026-05-03T10:00:00"
+#   }
+# }
+
+
+# =============================================================================
+# 4. CRIAR PROJETO — POST /projects
+# =============================================================================
+# Cria um novo projeto acadêmico vinculado ao usuário autenticado.
+# Campos obrigatórios: title, course, institution, norm
+# norm: ABNT | APA | VANCOUVER
+# Ao criar, capítulos padrão são gerados automaticamente pelo sistema.
+# IMPORTANTE: anote o "id" da resposta e cole em @projectId no topo.
+# Resposta esperada: 201 Created
+# =============================================================================
+
+### [4] Criar projeto — payload completo (sucesso)
+POST {{baseUrl}}/projects
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "title": "Impacto da Inteligência Artificial no Ensino Superior",
+  "course": "Ciência da Computação",
+  "institution": "Universidade Federal de Minas Gerais",
+  "advisorName": "Prof. Dr. Carlos Mendes",
+  "norm": "ABNT",
+  "deadline": "2026-11-30",
+  "theme": "Inteligência Artificial na Educação",
+  "researchProblem": "Como a IA pode auxiliar no processo de ensino-aprendizagem no ensino superior?",
+  "generalObjective": "Analisar o impacto das ferramentas de IA no desempenho acadêmico dos estudantes",
+  "specificObjectives": "Mapear ferramentas de IA utilizadas; Avaliar adoção por docentes; Medir impacto no desempenho"
+}
+
+###
+# Resposta esperada — 201 Created
+# {
+#   "success": true,
+#   "message": "Projeto criado com sucesso",
+#   "data": {
+#     "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+#     "title": "Impacto da Inteligência Artificial no Ensino Superior",
+#     "course": "Ciência da Computação",
+#     "institution": "Universidade Federal de Minas Gerais",
+#     "advisorName": "Prof. Dr. Carlos Mendes",
+#     "norm": "ABNT",
+#     "deadline": "2026-11-30",
+#     "theme": "Inteligência Artificial na Educação",
+#     "researchProblem": "Como a IA pode auxiliar...",
+#     "generalObjective": "Analisar o impacto...",
+#     "specificObjectives": "Mapear ferramentas...",
+#     "status": "IN_PROGRESS",
+#     "progress": 0,
+#     "totalChapters": 6,
+#     "completedChapters": 0,
+#     "chapters": [...],
+#     "createdAt": "2026-05-03T10:05:00",
+#     "updatedAt": "2026-05-03T10:05:00"
+#   }
+# }
+
+### [4B] Criar projeto — payload mínimo obrigatório (sucesso)
+POST {{baseUrl}}/projects
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "title": "TCC Engenharia de Software",
+  "course": "Engenharia de Software",
+  "institution": "UFMG",
+  "norm": "ABNT"
+}
+
+### [4C] Criar projeto — campos obrigatórios ausentes (erro esperado)
+POST {{baseUrl}}/projects
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "title": "Projeto sem curso",
+  "norm": "ABNT"
+}
+
+###
+# Resposta esperada — 400 Bad Request
+# {
+#   "success": false,
+#   "message": "Erro de validação",
+#   "data": {
+#     "course": "Curso é obrigatório",
+#     "institution": "Instituição é obrigatória"
+#   }
+# }
+
+### [4D] Criar projeto — norm inválida (erro esperado)
+POST {{baseUrl}}/projects
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "title": "Projeto norm inválida",
+  "course": "Direito",
+  "institution": "USP",
+  "norm": "NORMA_INEXISTENTE"
+}
+
+###
+# Resposta esperada — 400 Bad Request (deserialização falha no enum)
+
+
+# =============================================================================
+# 5. LISTAR PROJETOS — GET /projects
+# =============================================================================
+# Retorna todos os projetos do usuário autenticado.
+# Resposta esperada: 200 OK
+# =============================================================================
+
+### [5] Listar projetos do usuário autenticado — sucesso
+GET {{baseUrl}}/projects
+Authorization: Bearer {{token}}
+
+###
+# Resposta esperada — 200 OK
+# {
+#   "success": true,
+#   "message": "OK",
+#   "data": [
+#     {
+#       "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+#       "title": "Impacto da Inteligência Artificial no Ensino Superior",
+#       "course": "Ciência da Computação",
+#       "institution": "Universidade Federal de Minas Gerais",
+#       "advisorName": "Prof. Dr. Carlos Mendes",
+#       "norm": "ABNT",
+#       "deadline": "2026-11-30",
+#       "theme": "Inteligência Artificial na Educação",
+#       "researchProblem": "Como a IA pode auxiliar...",
+#       "generalObjective": "Analisar o impacto...",
+#       "specificObjectives": "Mapear ferramentas...",
+#       "status": "IN_PROGRESS",
+#       "progress": 0,
+#       "totalChapters": 6,
+#       "completedChapters": 0,
+#       "createdAt": "2026-05-03T10:05:00",
+#       "updatedAt": "2026-05-03T10:05:00"
+#     }
+#   ]
+# }
+
+### [5B] Listar projetos — lista vazia para novo usuário
+# Crie um segundo usuário, faça login e execute este request.
+# Resposta esperada: 200 OK com data: []
+
+
+# =============================================================================
+# 6. DETALHES DO PROJETO — GET /projects/{projectId}/details
+# =============================================================================
+# Retorna o projeto com a lista completa de capítulos.
+# Substitua @projectId pelo id obtido no passo 4.
+# Resposta esperada: 200 OK
+# =============================================================================
+
+### [6] Detalhes do projeto com capítulos — sucesso
+GET {{baseUrl}}/projects/{{projectId}}/details
+Authorization: Bearer {{token}}
+
+###
+# Resposta esperada — 200 OK
+# {
+#   "success": true,
+#   "message": "OK",
+#   "data": {
+#     "id": "a1b2c3d4-...",
+#     "title": "Impacto da Inteligência Artificial...",
+#     "status": "IN_PROGRESS",
+#     "progress": 0,
+#     "totalChapters": 6,
+#     "completedChapters": 0,
+#     "chapters": [
+#       {
+#         "id": "c1d2e3f4-...",
+#         "projectId": "a1b2c3d4-...",
+#         "title": "Introdução",
+#         "type": "INTRODUCTION",
+#         "content": null,
+#         "status": "NOT_STARTED",
+#         "orderIndex": 1,
+#         "wordCount": 0,
+#         "targetWordCount": 2000,
+#         "lastEditedAt": null,
+#         "createdAt": "2026-05-03T10:05:00",
+#         "updatedAt": "2026-05-03T10:05:00"
+#       },
+#       { "title": "Fundamentação Teórica", "type": "THEORETICAL_FOUNDATION", ... },
+#       { "title": "Metodologia",           "type": "METHODOLOGY",            ... },
+#       { "title": "Resultados",            "type": "RESULTS",                ... },
+#       { "title": "Conclusão",             "type": "CONCLUSION",             ... },
+#       { "title": "Referências",           "type": "REFERENCES",             ... }
+#     ],
+#     "createdAt": "2026-05-03T10:05:00",
+#     "updatedAt": "2026-05-03T10:05:00"
+#   }
+# }
+
+### [6B] Detalhes — projeto de outro usuário (erro esperado)
+# Substitua pelo id de um projeto que não pertence ao usuário autenticado.
+GET {{baseUrl}}/projects/00000000-0000-0000-0000-000000000000/details
+Authorization: Bearer {{token}}
+
+###
+# Resposta esperada — 404 Not Found
+# {
+#   "success": false,
+#   "message": "Projeto não encontrado",
+#   "data": null
+# }
+
+
+# =============================================================================
+# 7. LISTAR CAPÍTULOS — GET /chapters?projectId={projectId}
+# =============================================================================
+# Retorna os capítulos de um projeto específico.
+# O projectId é passado como query param.
+# Resposta esperada: 200 OK
+# =============================================================================
+
+### [7] Listar capítulos do projeto — sucesso
+GET {{baseUrl}}/chapters?projectId={{projectId}}
+Authorization: Bearer {{token}}
+
+###
+# Resposta esperada — 200 OK
+# {
+#   "success": true,
+#   "message": "OK",
+#   "data": [
+#     {
+#       "id": "c1d2e3f4-...",
+#       "projectId": "a1b2c3d4-...",
+#       "title": "Introdução",
+#       "type": "INTRODUCTION",
+#       "content": null,
+#       "status": "NOT_STARTED",
+#       "orderIndex": 1,
+#       "wordCount": 0,
+#       "targetWordCount": 2000,
+#       "lastEditedAt": null,
+#       "createdAt": "2026-05-03T10:05:00",
+#       "updatedAt": "2026-05-03T10:05:00"
+#     },
+#     { "title": "Fundamentação Teórica", "type": "THEORETICAL_FOUNDATION", "orderIndex": 2, ... },
+#     { "title": "Metodologia",           "type": "METHODOLOGY",            "orderIndex": 3, ... },
+#     { "title": "Resultados",            "type": "RESULTS",                "orderIndex": 4, ... },
+#     { "title": "Conclusão",             "type": "CONCLUSION",             "orderIndex": 5, ... },
+#     { "title": "Referências",           "type": "REFERENCES",             "orderIndex": 6, ... }
+#   ]
+# }
+
+### [7B] Listar capítulos — projectId de outro usuário (erro esperado)
+GET {{baseUrl}}/chapters?projectId=00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{token}}
+
+###
+# Resposta esperada — 404 Not Found
+# {
+#   "success": false,
+#   "message": "Projeto não encontrado",
+#   "data": null
+# }
+
+
+# =============================================================================
+# 8. ATUALIZAR CAPÍTULO — PATCH /chapters/{chapterId}
+# =============================================================================
+# Atualiza o conteúdo de um capítulo.
+# Substitua @chapterId pelo id obtido na resposta do passo 6 ou 7.
+# O status muda automaticamente para WRITING quando content é enviado.
+# Resposta esperada: 200 OK
+# =============================================================================
+
+### [8] Atualizar conteúdo do capítulo — sucesso
+PATCH {{baseUrl}}/chapters/{{chapterId}}
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "content": "A inteligência artificial (IA) tem transformado profundamente diversos setores da sociedade, e a educação superior não é exceção. Nos últimos anos, ferramentas baseadas em IA têm sido adotadas por instituições de ensino para personalizar o aprendizado, automatizar tarefas administrativas e fornecer suporte pedagógico em tempo real. Este trabalho investiga como essas tecnologias impactam o desempenho acadêmico dos estudantes universitários, analisando tanto os benefícios quanto os desafios de sua implementação."
+}
+
+###
+# Resposta esperada — 200 OK
+# {
+#   "success": true,
+#   "message": "OK",
+#   "data": {
+#     "id": "c1d2e3f4-...",
+#     "projectId": "a1b2c3d4-...",
+#     "title": "Introdução",
+#     "type": "INTRODUCTION",
+#     "content": "A inteligência artificial (IA) tem transformado...",
+#     "status": "WRITING",
+#     "orderIndex": 1,
+#     "wordCount": 87,
+#     "targetWordCount": 2000,
+#     "lastEditedAt": "2026-05-03T10:10:00",
+#     "createdAt": "2026-05-03T10:05:00",
+#     "updatedAt": "2026-05-03T10:10:00"
+#   }
+# }
+
+### [8B] Atualizar capítulo — conteúdo vazio (limpa o conteúdo)
+PATCH {{baseUrl}}/chapters/{{chapterId}}
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "content": null
+}
+
+### [8C] Atualizar capítulo — de outro usuário (erro esperado)
+PATCH {{baseUrl}}/chapters/00000000-0000-0000-0000-000000000000
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "content": "Tentativa de escrita em capítulo alheio"
+}
+
+###
+# Resposta esperada — 404 Not Found
+# {
+#   "success": false,
+#   "message": "Capítulo não encontrado",
+#   "data": null
+# }
+
+
+# =============================================================================
+# FLUXO COMPLETO DE PROGRESSO — Simulação de ciclo de vida de um capítulo
+# =============================================================================
+# Execute na ordem para observar o progresso do projeto subindo de 0% → 25%
+#
+# 1. GET  /projects/{projectId}/details  → progress: 0,  status capítulo: NOT_STARTED
+# 2. PATCH /chapters/{chapterId}         → envia content
+# 3. GET  /projects/{projectId}/details  → progress: 25, status capítulo: WRITING
+#
+# Lógica de progresso por status de capítulo:
+#   NOT_STARTED → 0 pts
+#   WRITING     → 25 pts
+#   REVIEW      → 75 pts
+#   APPROVED    → 100 pts
+# O progresso total é a média dos pontos de todos os capítulos.
+# =============================================================================
+
+### [FLUXO] Verificar progresso antes de editar
+GET {{baseUrl}}/projects/{{projectId}}/details
+Authorization: Bearer {{token}}
+
+### [FLUXO] Editar o capítulo de introdução
+PATCH {{baseUrl}}/chapters/{{chapterId}}
+Content-Type: {{contentType}}
+Authorization: Bearer {{token}}
+
+{
+  "content": "Conteúdo inicial da introdução para testar o progresso."
+}
+
+### [FLUXO] Verificar progresso após editar (deve subir para ~25% se 1 de 6 capítulos)
+GET {{baseUrl}}/projects/{{projectId}}/details
+Authorization: Bearer {{token}}

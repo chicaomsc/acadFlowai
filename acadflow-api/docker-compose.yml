@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: acadflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: acadflow_db
+      POSTGRES_USER: acadflow
+      POSTGRES_PASSWORD: acadflow123
+    ports:
+      - "5434:5432"
+    volumes:
+      - acadflow_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  acadflow_postgres_data:
