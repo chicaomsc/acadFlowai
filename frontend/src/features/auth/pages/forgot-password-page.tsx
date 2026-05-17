@@ -13,7 +13,7 @@ export function ForgotPasswordPage() {
         <h2 className="mb-2.5 font-serif text-[31px] leading-[1.14] tracking-[-0.03em] text-foreground">
           Redefina sua senha.
         </h2>
-        <p className="mb-8 max-w-[292px] font-sans text-[13px] font-normal leading-[1.72] text-muted-foreground/92">
+        <p className="mb-8 max-w-73 font-sans text-[13px] font-normal leading-[1.72] text-muted-foreground/92">
           Enviaremos um link seguro para o e-mail cadastrado para você acessar sua conta
           novamente.
         </p>
