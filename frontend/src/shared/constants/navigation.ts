@@ -71,7 +71,7 @@ export const brandMeta = {
     'Planejamento, escrita, referências, revisão e exportação em uma jornada preparada para escalar como produto SaaS.',
   heroFeatures: [
     'Fluxos separados por auth, app shell e features',
-    'Dados mockados prontos para virar APIs',
+    'Fluxos já conectados à API nas áreas centrais do produto',
     'Base visual sóbria, clara e orientada a produtividade',
   ],
   secondaryMetric: {
@@ -85,6 +85,6 @@ export const brandMeta = {
   note: 'Pensado para alunos, orientadores e instituições.',
   sideCardTitle: 'Escrita acadêmica com menos fricção',
   sideCardDescription: 'Mantenha capítulos, prazos e revisões conectados sem cair em um dashboard genérico.',
-  sideCardHighlight: 'Arquitetura preparada para backend futuro',
+  sideCardHighlight: 'Arquitetura pronta para evoluir os módulos restantes',
   sideCardIcon: FileText,
 }

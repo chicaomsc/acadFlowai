@@ -1,4 +1,17 @@
-import type { Chapter, ChapterStatus, ChapterType, Project, ProjectStatus, User, UserPlan, UserRole } from '@/shared/types/contracts'
+import type {
+  Chapter,
+  ChapterStatus,
+  ChapterType,
+  Project,
+  ProjectDetailsPayload,
+  ProjectDetailsProject,
+  ProjectStatus,
+  Reference,
+  TimelineTask,
+  User,
+  UserPlan,
+  UserRole,
+} from '@/shared/types/contracts'
 
 export interface ApiEnvelope<T> {
   success: boolean
@@ -66,6 +79,50 @@ export interface ApiProjectResponse {
 
 export interface ApiProjectDetailResponse extends ApiProjectResponse {
   chapters: ApiChapterResponse[]
+  references?: ApiReferenceResponse[] | null
+  timelineTasks?: ApiTimelineTaskResponse[] | null
+  totalReferences?: number | null
+  citedReferences?: number | null
+  pendingReferences?: number | null
+  totalTasks?: number | null
+  completedTasks?: number | null
+  pendingTasks?: number | null
+  exportReady?: boolean | null
+  exportProgress?: number | null
+  pendingExportItems?: string[] | null
+}
+
+export interface ApiReferenceResponse {
+  id: string
+  projectId: string
+  primaryChapterId: string | null
+  title: string
+  authors: string
+  type: string
+  year: number
+  journal?: string | null
+  publisher?: string | null
+  doi?: string | null
+  url?: string | null
+  accessDate?: string | null
+  abntFormatted: string
+  hasCitation: boolean
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface ApiTimelineTaskResponse {
+  id: string
+  projectId: string
+  chapterId: string | null
+  title: string
+  description: string | null
+  dueDate: string | null
+  priority: string
+  status: string
+  orderIndex: number
+  createdAt?: string | null
+  updatedAt?: string | null
 }
 
 function normalizeUserRole(role?: string | null): UserRole {
@@ -214,5 +271,116 @@ export function mapApiProject(project: ApiProjectResponse): Project & { advisorN
     timelineTaskIds: [],
     advisorCommentIds: [],
     advisorName: project.advisorName ?? undefined,
+  }
+}
+
+function mapReferenceTypeFromApi(type: string): Reference['type'] {
+  switch (type.toUpperCase()) {
+    case 'ARTICLE':
+      return 'article'
+    case 'BOOK':
+      return 'book'
+    case 'WEBSITE':
+      return 'website'
+    case 'OTHER':
+      return 'other'
+    case 'THESIS':
+    default:
+      return 'thesis'
+  }
+}
+
+function mapPriorityFromApi(priority: string): TimelineTask['priority'] {
+  switch (priority.toUpperCase()) {
+    case 'LOW':
+      return 'low'
+    case 'HIGH':
+      return 'high'
+    case 'MEDIUM':
+    default:
+      return 'medium'
+  }
+}
+
+function mapStatusFromApi(status: string): TimelineTask['status'] {
+  switch (status.toUpperCase()) {
+    case 'TODO':
+      return 'todo'
+    case 'IN_PROGRESS':
+      return 'in_progress'
+    case 'DONE':
+    default:
+      return 'completed'
+  }
+}
+
+function parseAuthors(authors: string) {
+  return authors
+    .split(';')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+export function mapApiReference(reference: ApiReferenceResponse): Reference {
+  return {
+    id: reference.id,
+    projectId: reference.projectId,
+    type: mapReferenceTypeFromApi(reference.type),
+    authors: parseAuthors(reference.authors),
+    title: reference.title,
+    year: reference.year,
+    doi: reference.doi ?? undefined,
+    journal: reference.journal ?? undefined,
+    publisher: reference.publisher ?? undefined,
+    url: reference.url ?? undefined,
+    accessDate: reference.accessDate ? new Date(reference.accessDate) : undefined,
+    chapterIds: reference.primaryChapterId ? [reference.primaryChapterId] : [],
+    primaryChapterId: reference.primaryChapterId ?? undefined,
+    abntFormatted: reference.abntFormatted,
+    hasCitation: reference.hasCitation,
+  }
+}
+
+export function mapApiTimelineTask(task: ApiTimelineTaskResponse): TimelineTask {
+  return {
+    id: task.id,
+    projectId: task.projectId,
+    chapterId: task.chapterId ?? undefined,
+    title: task.title,
+    description: task.description ?? undefined,
+    dueDate: task.dueDate ? new Date(task.dueDate) : undefined,
+    priority: mapPriorityFromApi(task.priority),
+    status: mapStatusFromApi(task.status),
+    order: task.orderIndex,
+  }
+}
+
+export function mapApiProjectDetails(response: ApiProjectDetailResponse): ProjectDetailsPayload {
+  const chapters = response.chapters.map(mapApiChapter)
+  const references = (response.references ?? []).map(mapApiReference)
+  const timelineTasks = (response.timelineTasks ?? []).map(mapApiTimelineTask)
+  const project = mapApiProject(response)
+
+  const detailsProject: ProjectDetailsProject = {
+    ...project,
+    chapterIds: chapters.map((chapter) => chapter.id),
+    referenceIds: references.map((reference) => reference.id),
+    timelineTaskIds: timelineTasks.map((task) => task.id),
+    references,
+    timelineTasks,
+    totalReferences: response.totalReferences ?? references.length,
+    citedReferences: response.citedReferences ?? references.filter((reference) => reference.hasCitation).length,
+    pendingReferences: response.pendingReferences ?? Math.max(0, (response.totalReferences ?? references.length) - (response.citedReferences ?? references.filter((reference) => reference.hasCitation).length)),
+    totalTasks: response.totalTasks ?? timelineTasks.length,
+    completedTasks: response.completedTasks ?? timelineTasks.filter((task) => task.status === 'completed').length,
+    pendingTasks: response.pendingTasks ?? timelineTasks.filter((task) => task.status !== 'completed').length,
+    exportReady: response.exportReady ?? false,
+    exportProgress: response.exportProgress ?? 0,
+    pendingExportItems: response.pendingExportItems ?? [],
+  }
+
+  return {
+    project: detailsProject,
+    chapters,
   }
 }

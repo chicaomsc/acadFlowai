@@ -116,7 +116,7 @@ public class ExportService {
         return resource;
     }
 
-    private ExportStatusResponse calculateStatus(Project project, String format) {
+    public ExportStatusResponse calculateStatus(Project project, String format) {
         List<Chapter> chapters = chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId());
         List<Reference> references = referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId());
 

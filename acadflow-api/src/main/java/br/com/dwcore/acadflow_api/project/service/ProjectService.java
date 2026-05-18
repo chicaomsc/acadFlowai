@@ -4,6 +4,8 @@ import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterStatus;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
 import br.com.dwcore.acadflow_api.chapter.repository.ChapterRepository;
+import br.com.dwcore.acadflow_api.export.dto.ExportStatusResponse;
+import br.com.dwcore.acadflow_api.export.service.ExportService;
 import br.com.dwcore.acadflow_api.project.domain.Project;
 import br.com.dwcore.acadflow_api.project.domain.ProjectStatus;
 import br.com.dwcore.acadflow_api.project.dto.CreateProjectRequest;
@@ -11,7 +13,11 @@ import br.com.dwcore.acadflow_api.project.dto.ProjectDetailResponse;
 import br.com.dwcore.acadflow_api.project.dto.ProjectResponse;
 import br.com.dwcore.acadflow_api.project.dto.UpdateProjectRequest;
 import br.com.dwcore.acadflow_api.project.repository.ProjectRepository;
+import br.com.dwcore.acadflow_api.reference.domain.Reference;
+import br.com.dwcore.acadflow_api.reference.repository.ReferenceRepository;
 import br.com.dwcore.acadflow_api.shared.exception.ResourceNotFoundException;
+import br.com.dwcore.acadflow_api.timeline.domain.TimelineTask;
+import br.com.dwcore.acadflow_api.timeline.repository.TimelineTaskRepository;
 import br.com.dwcore.acadflow_api.user.domain.User;
 import br.com.dwcore.acadflow_api.user.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +34,9 @@ public class ProjectService {
 
     private final ProjectRepository projectRepository;
     private final ChapterRepository chapterRepository;
+    private final ReferenceRepository referenceRepository;
+    private final TimelineTaskRepository timelineTaskRepository;
+    private final ExportService exportService;
     private final UserService userService;
 
     @Transactional(readOnly = true)
@@ -46,7 +55,12 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public ProjectDetailResponse findDetailById(UUID projectId, String userEmail) {
-        return ProjectDetailResponse.from(getOwnedProject(projectId, userEmail));
+        Project project = getOwnedProject(projectId, userEmail);
+        List<Reference> references = referenceRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+        List<TimelineTask> tasks = timelineTaskRepository.findByProjectIdOrderByOrderIndexAscCreatedAtAsc(projectId);
+        ExportStatusResponse exportStatus = exportService.calculateStatus(project, "docx");
+        return ProjectDetailResponse.from(project, references, tasks,
+                exportStatus.ready(), exportStatus.progress(), exportStatus.pendingItems());
     }
 
     @Transactional
@@ -75,13 +89,15 @@ public class ProjectService {
                 .status(ProjectStatus.IN_PROGRESS)
                 .build();
 
-        project = projectRepository.save(project);
+        project = projectRepository.saveAndFlush(project);
 
-        List<Chapter> chapters = buildDefaultChapters(project);
-        chapterRepository.saveAll(chapters);
-        project.getChapters().addAll(chapters);
+        List<Chapter> defaultChapters = buildDefaultChapters(project);
+        List<Chapter> savedChapters = chapterRepository.saveAllAndFlush(defaultChapters);
+        project.getChapters().addAll(savedChapters);
 
-        return ProjectDetailResponse.from(project);
+        ExportStatusResponse exportStatus = exportService.calculateStatus(project, "docx");
+        return ProjectDetailResponse.from(project, List.of(), List.of(),
+                exportStatus.ready(), exportStatus.progress(), exportStatus.pendingItems());
     }
 
     @Transactional
@@ -105,7 +121,13 @@ public class ProjectService {
         if (request.abstractPt() != null)         project.setAbstractPt(request.abstractPt());
         if (request.abstractEn() != null)         project.setAbstractEn(request.abstractEn());
         if (request.keywords() != null)           project.setKeywords(request.keywords());
-        return ProjectDetailResponse.from(projectRepository.save(project));
+
+        Project saved = projectRepository.saveAndFlush(project);
+        List<Reference> references = referenceRepository.findByProjectIdOrderByCreatedAtDesc(saved.getId());
+        List<TimelineTask> tasks = timelineTaskRepository.findByProjectIdOrderByOrderIndexAscCreatedAtAsc(saved.getId());
+        ExportStatusResponse exportStatus = exportService.calculateStatus(saved, "docx");
+        return ProjectDetailResponse.from(saved, references, tasks,
+                exportStatus.ready(), exportStatus.progress(), exportStatus.pendingItems());
     }
 
     @Transactional

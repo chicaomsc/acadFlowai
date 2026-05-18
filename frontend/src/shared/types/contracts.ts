@@ -101,6 +101,26 @@ export interface TimelineTask {
   order: number
 }
 
+export interface ProjectDetailsProject extends Project {
+  advisorName?: string
+  references: Reference[]
+  timelineTasks: TimelineTask[]
+  totalReferences: number
+  citedReferences: number
+  pendingReferences: number
+  totalTasks: number
+  completedTasks: number
+  pendingTasks: number
+  exportReady: boolean
+  exportProgress: number
+  pendingExportItems: string[]
+}
+
+export interface ProjectDetailsPayload {
+  project: ProjectDetailsProject
+  chapters: Chapter[]
+}
+
 export interface AdvisorComment {
   id: string
   projectId: string

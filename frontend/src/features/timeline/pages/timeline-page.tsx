@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Circle, Clock3, MoreHorizontal, Plus, PencilLine, Trash2 } from 'lucide-react'
 import { timelineQuery } from '@/features/timeline/services/timeline.service'
@@ -44,6 +44,13 @@ const emptyTaskDraft: TaskDraft = {
   priority: 'medium',
 }
 
+type TimelineStatus = TimelineTask['status']
+
+function isDesktopDragAvailable() {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia('(pointer: fine)').matches
+}
+
 export function TimelinePage() {
   const activeProjectId = getActiveProjectId() ?? undefined
   const queryClient = useQueryClient()
@@ -58,12 +65,39 @@ export function TimelinePage() {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
   const [taskDraft, setTaskDraft] = useState<TaskDraft>(emptyTaskDraft)
   const [pendingAction, setPendingAction] = useState<{ type: 'save' | 'delete' | 'advance'; taskId?: string } | null>(null)
+  const [draggedTask, setDraggedTask] = useState<{ taskId: string; fromStatus: TimelineStatus } | null>(null)
+  const [dropColumn, setDropColumn] = useState<TimelineStatus | null>(null)
+  const [dragEnabled, setDragEnabled] = useState(false)
+  const [feedback, setFeedback] = useState<{ tone: 'error' | 'success'; message: string } | null>(null)
+  const dragStartRef = useRef<{ taskId: string; fromStatus: TimelineStatus; x: number; y: number } | null>(null)
+  const activeDragRef = useRef<{ taskId: string; fromStatus: TimelineStatus } | null>(null)
+  const currentDropColumnRef = useRef<TimelineStatus | null>(null)
+  const columnRefs = useRef<Record<TimelineStatus, HTMLDivElement | null>>({
+    todo: null,
+    in_progress: null,
+    completed: null,
+  })
 
   const isMutating = pendingAction !== null
 
   useEffect(() => {
     if (data) setTasks(data)
   }, [data])
+
+  useEffect(() => {
+    setDragEnabled(isDesktopDragAvailable())
+  }, [])
+
+  useEffect(() => {
+    currentDropColumnRef.current = dropColumn
+  }, [dropColumn])
+
+  useEffect(() => {
+    return () => {
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+  }, [])
 
   function resetTaskDialog() {
     setEditingTaskId(null)
@@ -153,27 +187,142 @@ export function TimelinePage() {
     }
   }
 
-  async function handleAdvanceTask(task: TimelineTask) {
+  async function handleMoveTaskFromMenu(taskId: string, nextStatus: TimelineStatus) {
+    await commitTaskStatusChange(taskId, nextStatus)
+  }
+
+  const taskLookup = useMemo(
+    () => new Map((tasks ?? []).map((task) => [task.id, task])),
+    [tasks],
+  )
+
+  function moveTaskLocally(taskId: string, nextStatus: TimelineStatus) {
+    setTasks((current) => current?.map((item) => (
+      item.id === taskId ? { ...item, status: nextStatus } : item
+    )))
+  }
+
+  async function commitTaskStatusChange(taskId: string, nextStatus: TimelineStatus) {
     if (isMutating) return
 
-    const nextStatus =
-      task.status === 'todo'
-        ? 'in_progress'
-        : task.status === 'in_progress'
-          ? 'completed'
-          : 'todo'
+    const task = taskLookup.get(taskId)
+    if (!task || task.status === nextStatus) return
 
-    setPendingAction({ type: 'advance', taskId: task.id })
+    setPendingAction({ type: 'advance', taskId })
+    setFeedback(null)
+    const previousTasks = tasks ? structuredClone(tasks) : undefined
+    moveTaskLocally(taskId, nextStatus)
 
     try {
-      const updated = await updateTimelineTaskStatus(task.id, nextStatus, activeProjectId)
-      if (!updated) return
+      const updated = await updateTimelineTaskStatus(taskId, nextStatus, activeProjectId)
+      if (!updated) {
+        throw new Error('Não foi possível atualizar o status da tarefa.')
+      }
 
-      setTasks((current) => current?.map((item) => (item.id === task.id ? updated : item)))
+      setTasks((current) => current?.map((item) => (item.id === taskId ? updated : item)))
       await invalidateTimelineQueries()
+    } catch (error) {
+      setTasks(previousTasks)
+      setFeedback({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Não foi possível mover a tarefa agora.',
+      })
     } finally {
       setPendingAction(null)
     }
+  }
+
+  function cleanupPointerDrag() {
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+    window.removeEventListener('pointermove', handlePointerMove)
+    window.removeEventListener('pointerup', handlePointerUp)
+    window.removeEventListener('pointercancel', handlePointerUp)
+  }
+
+  function getDropColumnFromPoint(clientX: number, clientY: number): TimelineStatus | null {
+    const statuses: TimelineStatus[] = ['todo', 'in_progress', 'completed']
+
+    for (const status of statuses) {
+      const column = columnRefs.current[status]
+      if (!column) continue
+
+      const rect = column.getBoundingClientRect()
+      const isInside =
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+
+      if (isInside) {
+        return status
+      }
+    }
+
+    return null
+  }
+
+  function handleTaskDragEnd() {
+    cleanupPointerDrag()
+    dragStartRef.current = null
+    activeDragRef.current = null
+    currentDropColumnRef.current = null
+    setDraggedTask(null)
+    setDropColumn(null)
+  }
+
+  function handlePointerMove(event: PointerEvent) {
+    const dragStart = dragStartRef.current
+    if (!dragStart || isMutating) return
+
+    const movedEnough =
+      Math.abs(event.clientX - dragStart.x) > 6 ||
+      Math.abs(event.clientY - dragStart.y) > 6
+
+    if (!activeDragRef.current && movedEnough) {
+      activeDragRef.current = { taskId: dragStart.taskId, fromStatus: dragStart.fromStatus }
+      setDraggedTask({ taskId: dragStart.taskId, fromStatus: dragStart.fromStatus })
+      setFeedback(null)
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'grabbing'
+    }
+
+    if (!movedEnough) return
+
+    const nextDropColumn = getDropColumnFromPoint(event.clientX, event.clientY)
+    currentDropColumnRef.current = nextDropColumn
+    setDropColumn(nextDropColumn)
+  }
+
+  function handlePointerUp() {
+    const dragStart = dragStartRef.current
+    const activeDrag = activeDragRef.current ?? (dragStart ? { taskId: dragStart.taskId, fromStatus: dragStart.fromStatus } : null)
+    const nextDropColumn = currentDropColumnRef.current
+
+    handleTaskDragEnd()
+
+    if (!activeDrag || !nextDropColumn || activeDrag.fromStatus === nextDropColumn) return
+    void commitTaskStatusChange(activeDrag.taskId, nextDropColumn)
+  }
+
+  function handleTaskPointerDown(event: React.PointerEvent<HTMLDivElement>, taskId: string) {
+    if (!dragEnabled || isMutating) return
+    if ((event.target as HTMLElement).closest('button,[role="menuitem"]')) return
+
+    const task = taskLookup.get(taskId)
+    if (!task) return
+
+    dragStartRef.current = {
+      taskId,
+      fromStatus: task.status,
+      x: event.clientX,
+      y: event.clientY,
+    }
+    activeDragRef.current = null
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', handlePointerUp)
   }
 
   if (isLoading) {
@@ -195,7 +344,7 @@ export function TimelinePage() {
       <PageHeader
         eyebrow="Execution"
         title="Cronograma"
-        description="Checklist e visão kanban com tarefas mockadas prontas para virar entidade persistida."
+        description="Checklist e visão kanban para acompanhar prazos e andamento do projeto ativo."
         action={
           <Dialog
             open={dialogOpen}
@@ -292,6 +441,12 @@ export function TimelinePage() {
         }
       />
 
+      {feedback ? (
+        <p className={feedback.tone === 'error' ? 'text-sm text-destructive' : 'text-sm text-primary'}>
+          {feedback.message}
+        </p>
+      ) : null}
+
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard title="A fazer" value={groups.todo.length} helper="Itens aguardando execução" icon={Circle} />
         <StatCard title="Em andamento" value={groups.in_progress.length} helper="Etapas em produção acadêmica" icon={Clock3} />
@@ -329,30 +484,43 @@ export function TimelinePage() {
           ['in_progress', 'Em andamento', 'primary'],
           ['completed', 'Concluído', 'success'],
         ].map(([key, label, tone]) => (
-          <Card key={key} className="surface-card rounded-[30px]">
+          <Card
+            key={key}
+            className={`surface-card rounded-[30px] transition-colors ${
+              dropColumn === key ? 'border-primary/40 bg-primary/5' : ''
+            }`}
+          >
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <CardTitle>{label}</CardTitle>
               <StatusBadge label={`${groups[key as keyof typeof groups].length} itens`} tone={tone as 'neutral'} />
             </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="pt-0">
+                <div
+                  ref={(node) => {
+                    columnRefs.current[key as TimelineStatus] = node
+                  }}
+                  className={`min-h-[240px] space-y-3 rounded-[24px] p-1 transition-colors ${
+                    dropColumn === key ? 'bg-primary/5 ring-1 ring-primary/20' : ''
+                  }`}
+                >
               {groups[key as keyof typeof groups].map((task) => (
                 (() => {
                   const isTaskPending = pendingAction?.taskId === task.id
+                  const isDragging = draggedTask?.taskId === task.id
 
                   return (
                 <div
                   key={task.id}
-                  role="button"
-                  tabIndex={0}
+                  role="group"
                   aria-disabled={isMutating}
-                  onClick={() => void handleAdvanceTask(task)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      void handleAdvanceTask(task)
-                    }
-                  }}
-                  className={`w-full rounded-[22px] border border-border bg-white px-4 py-4 text-left transition-colors hover:bg-muted/35 ${
+                  onPointerDown={(event) => handleTaskPointerDown(event, task.id)}
+                  className={`w-full rounded-[22px] border border-border bg-white px-4 py-4 text-left transition-colors ${
+                    isDragging
+                      ? 'cursor-grabbing opacity-60 shadow-lg ring-2 ring-primary/15'
+                      : dragEnabled
+                        ? 'cursor-grab hover:bg-muted/35 active:cursor-grabbing'
+                        : 'hover:bg-muted/35'
+                  } ${
                     isMutating ? 'cursor-not-allowed opacity-70' : ''
                   }`}
                 >
@@ -384,11 +552,12 @@ export function TimelinePage() {
                             className="h-8 w-8 rounded-full"
                             disabled={isMutating}
                             onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
                           >
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40 rounded-[18px]">
+                        <DropdownMenuContent align="end" className="w-52 rounded-[18px]">
                           <DropdownMenuItem
                             onSelect={(event) => {
                               event.preventDefault()
@@ -398,6 +567,36 @@ export function TimelinePage() {
                           >
                             <PencilLine className="mr-2 h-4 w-4" />
                             Editar
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={isMutating || task.status === 'todo'}
+                            onSelect={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              void handleMoveTaskFromMenu(task.id, 'todo')
+                            }}
+                          >
+                            Mover para A fazer
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={isMutating || task.status === 'in_progress'}
+                            onSelect={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              void handleMoveTaskFromMenu(task.id, 'in_progress')
+                            }}
+                          >
+                            Mover para Em andamento
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={isMutating || task.status === 'completed'}
+                            onSelect={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              void handleMoveTaskFromMenu(task.id, 'completed')
+                            }}
+                          >
+                            Mover para Concluído
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             variant="destructive"
@@ -418,7 +617,8 @@ export function TimelinePage() {
                   )
                 })()
               ))}
-            </CardContent>
+                </div>
+              </CardContent>
           </Card>
         ))}
       </div>

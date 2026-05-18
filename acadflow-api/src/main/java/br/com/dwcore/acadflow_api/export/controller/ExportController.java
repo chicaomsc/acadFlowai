@@ -4,6 +4,7 @@ import br.com.dwcore.acadflow_api.export.dto.CreateExportRequest;
 import br.com.dwcore.acadflow_api.export.dto.ExportArtifactResponse;
 import br.com.dwcore.acadflow_api.export.dto.ExportStatusResponse;
 import br.com.dwcore.acadflow_api.export.service.ExportService;
+import br.com.dwcore.acadflow_api.shared.exception.ResourceNotFoundException;
 import br.com.dwcore.acadflow_api.shared.response.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -52,6 +53,9 @@ public class ExportController {
             @PathVariable UUID projectId,
             @PathVariable String fileName,
             @AuthenticationPrincipal UserDetails userDetails) {
+        if (fileName.contains("..") || fileName.contains("/") || fileName.contains("\\")) {
+            throw new ResourceNotFoundException("Arquivo não encontrado");
+        }
         Resource resource = exportService.loadFile(projectId, fileName, userDetails.getUsername());
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(DOCX_MEDIA_TYPE))

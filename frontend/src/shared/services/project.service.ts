@@ -1,24 +1,32 @@
 import { mockDb } from '@/shared/mocks/database'
 import { setActiveProjectId } from '@/shared/services/active-project.service'
-import { mapApiChapter, mapApiProject, type ApiProjectDetailResponse, type ApiProjectResponse } from '@/shared/services/api-mappers'
+import {
+  mapApiProject,
+  mapApiProjectDetails,
+  type ApiProjectDetailResponse,
+  type ApiProjectResponse,
+} from '@/shared/services/api-mappers'
 import { apiClient } from '@/shared/services/api-client'
-import { buildDerivedTimelineTasks } from '@/shared/services/project-helpers'
 import type {
   Advisor,
   Chapter,
   ChapterType,
   Project,
+  ProjectDetailsPayload,
+  Reference,
   TimelineTask,
 } from '@/shared/types/contracts'
 import { calculateProjectProgress } from '@/shared/utils/domain-logic'
+import { validateExportStatus } from '@/shared/utils/domain-logic'
 
-export interface ProjectDetailsPayload {
-  project: Project & { advisorName?: string }
-  chapters: Chapter[]
-  references: []
-  tasks: ReturnType<typeof buildDerivedTimelineTasks>
-  comments: []
-}
+export type AcademicDegreeValue = 'GRADUACAO' | 'ESPECIALIZACAO' | 'MESTRADO' | 'DOUTORADO'
+
+export const academicDegreeOptions: Array<{ value: AcademicDegreeValue; label: string }> = [
+  { value: 'GRADUACAO', label: 'Graduação' },
+  { value: 'ESPECIALIZACAO', label: 'Especialização' },
+  { value: 'MESTRADO', label: 'Mestrado' },
+  { value: 'DOUTORADO', label: 'Doutorado' },
+]
 
 export interface CreateProjectInput {
   title: string
@@ -58,6 +66,86 @@ export interface UpdateProjectInput {
   abstractPt?: string
   abstractEn?: string
   keywords?: string[]
+}
+
+function normalizeAcademicDegree(value?: string | null): AcademicDegreeValue | null {
+  const normalized = value
+    ?.trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+
+  if (!normalized) return null
+
+  switch (normalized) {
+    case 'GRADUACAO':
+    case 'GRADUACAO/BACHARELADO':
+    case 'BACHARELADO':
+    case 'LICENCIATURA':
+      return 'GRADUACAO'
+    case 'ESPECIALIZACAO':
+    case 'POS-GRADUACAO':
+    case 'POS GRADUACAO':
+      return 'ESPECIALIZACAO'
+    case 'MESTRADO':
+      return 'MESTRADO'
+    case 'DOUTORADO':
+      return 'DOUTORADO'
+    default:
+      return null
+  }
+}
+
+export function getAcademicDegreeLabel(value?: string | null) {
+  const normalized = normalizeAcademicDegree(value)
+  return academicDegreeOptions.find((option) => option.value === normalized)?.label ?? value ?? ''
+}
+
+function normalizeDefenseYear(value?: number | null) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null
+  return Number.isFinite(value) ? Math.trunc(value) : null
+}
+
+function normalizeDeadline(value?: string | null) {
+  const normalized = value?.trim()
+  return normalized ? normalized : null
+}
+
+function normalizeText(value?: string | null) {
+  const normalized = value?.trim()
+  return normalized ? normalized : null
+}
+
+function normalizeStringList(values?: string[] | null) {
+  return values?.map((item) => item.trim()).filter(Boolean) ?? []
+}
+
+function buildProjectApiPayload(input: CreateProjectInput | UpdateProjectInput) {
+  const academicDegree = normalizeAcademicDegree(input.academicDegree)
+
+  if (input.academicDegree?.trim() && !academicDegree) {
+    throw new Error('Grau acadêmico inválido. Selecione Graduação, Especialização, Mestrado ou Doutorado.')
+  }
+
+  return {
+    title: input.title.trim(),
+    subtitle: normalizeText(input.subtitle),
+    course: input.course.trim(),
+    institution: input.institution.trim(),
+    academicDegree,
+    advisorName: normalizeText(input.advisorName),
+    deadline: normalizeDeadline(input.deadline),
+    norm: input.norm,
+    theme: normalizeText(input.theme),
+    researchProblem: normalizeText(input.researchProblem),
+    generalObjective: normalizeText(input.generalObjective),
+    specificObjectives: normalizeStringList(input.specificObjectives).join('\n') || null,
+    defenseCity: normalizeText(input.defenseCity),
+    defenseYear: normalizeDefenseYear(input.defenseYear),
+    abstractPt: normalizeText(input.abstractPt),
+    abstractEn: normalizeText(input.abstractEn),
+    keywords: normalizeStringList(input.keywords).join('; ') || null,
+  }
 }
 
 export function isProjectNotFoundError(error: unknown) {
@@ -115,34 +203,35 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
     return apiClient.get(`/projects/${projectId}/details`, () => {
       const project = mockDb.projects.find((item) => item.id === projectId)
       if (!project) return null
+      const chapters = mockDb.chapters.filter((chapter) => chapter.projectId === projectId)
+      const references = mockDb.references.filter((reference) => reference.projectId === projectId)
+      const timelineTasks = mockDb.timelineTasks.filter((task) => task.projectId === projectId)
+      const exportStatus = validateExportStatus(project, chapters, references, timelineTasks, 'docx')
 
       return {
-        project: hydrateProject(project),
-        chapters: mockDb.chapters.filter((chapter) => chapter.projectId === projectId),
-        references: [],
-        tasks: buildDerivedTimelineTasks(
-          projectId,
-          mockDb.chapters.filter((chapter) => chapter.projectId === projectId),
-        ),
-        comments: [],
+        project: {
+          ...hydrateProject(project),
+          referenceIds: references.map((reference) => reference.id),
+          timelineTaskIds: timelineTasks.map((task) => task.id),
+          references,
+          timelineTasks,
+          totalReferences: references.length,
+          citedReferences: references.filter((reference) => reference.hasCitation).length,
+          pendingReferences: references.filter((reference) => !reference.hasCitation).length,
+          totalTasks: timelineTasks.length,
+          completedTasks: timelineTasks.filter((task) => task.status === 'completed').length,
+          pendingTasks: timelineTasks.filter((task) => task.status !== 'completed').length,
+          exportReady: exportStatus.ready,
+          exportProgress: exportStatus.progress,
+          pendingExportItems: exportStatus.pendingItems,
+        },
+        chapters,
       }
     })
   }
 
   const response = await apiClient.get<ApiProjectDetailResponse>(`/projects/${projectId}/details`)
-  const project = mapApiProject(response)
-  const chapters = response.chapters.map(mapApiChapter)
-
-  return {
-    project: {
-      ...project,
-      chapterIds: chapters.map((chapter) => chapter.id),
-    },
-    chapters,
-    references: [],
-    tasks: buildDerivedTimelineTasks(project.id, chapters),
-    comments: [],
-  }
+  return mapApiProjectDetails(response)
 }
 
 function getNextId(prefix: string, ids: string[]): string {
@@ -276,51 +365,37 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectD
       setActiveProjectId(projectId)
 
       return {
-        project: hydrateProject(project),
+        project: {
+          ...hydrateProject(project),
+          references: [] as Reference[],
+          timelineTasks: tasks,
+          totalReferences: 0,
+          citedReferences: 0,
+          pendingReferences: 0,
+          totalTasks: tasks.length,
+          completedTasks: tasks.filter((task) => task.status === 'completed').length,
+          pendingTasks: tasks.filter((task) => task.status !== 'completed').length,
+          exportReady: false,
+          exportProgress: 0,
+          pendingExportItems: [],
+        },
         chapters,
-        references: [],
-        tasks,
-        comments: [],
       }
     })
   }
 
   const response = await apiClient.post<ApiProjectDetailResponse>('/projects', {
     body: {
+      ...buildProjectApiPayload(input),
       title: input.title.trim() || 'Novo projeto de TCC',
-      subtitle: input.subtitle?.trim() || null,
       course: input.course.trim() || 'Curso não informado',
       institution: input.institution.trim() || 'Instituição não informada',
-      academicDegree: input.academicDegree?.trim() || null,
-      advisorName: input.advisorName?.trim() || null,
-      deadline: input.deadline || null,
-      norm: input.norm,
-      theme: input.theme.trim() || null,
-      researchProblem: input.researchProblem.trim() || null,
-      generalObjective: input.generalObjective.trim() || null,
-      specificObjectives: input.specificObjectives.map((item) => item.trim()).filter(Boolean).join('\n'),
-      defenseCity: input.defenseCity?.trim() || null,
-      defenseYear: input.defenseYear ?? null,
-      abstractPt: input.abstractPt?.trim() || null,
-      abstractEn: input.abstractEn?.trim() || null,
-      keywords: input.keywords?.map((item) => item.trim()).filter(Boolean).join('; ') || null,
     },
   })
 
-  const project = mapApiProject(response)
-  const chapters = response.chapters.map(mapApiChapter)
-  setActiveProjectId(project.id)
-
-  return {
-    project: {
-      ...project,
-      chapterIds: chapters.map((chapter) => chapter.id),
-    },
-    chapters,
-    references: [],
-    tasks: buildDerivedTimelineTasks(project.id, chapters),
-    comments: [],
-  }
+  const payload = mapApiProjectDetails(response)
+  setActiveProjectId(payload.project.id)
+  return payload
 }
 
 export async function updateProject(projectId: string, input: UpdateProjectInput) {
@@ -357,25 +432,7 @@ export async function updateProject(projectId: string, input: UpdateProjectInput
   }
 
   const response = await apiClient.patch<ApiProjectResponse>(`/projects/${projectId}`, {
-    body: {
-      title: input.title.trim(),
-      subtitle: input.subtitle?.trim() || null,
-      course: input.course.trim(),
-      institution: input.institution.trim(),
-      academicDegree: input.academicDegree?.trim() || null,
-      advisorName: input.advisorName?.trim() || null,
-      deadline: input.deadline || null,
-      norm: input.norm,
-      theme: input.theme?.trim() || null,
-      researchProblem: input.researchProblem?.trim() || null,
-      generalObjective: input.generalObjective?.trim() || null,
-      specificObjectives: input.specificObjectives?.map((item) => item.trim()).filter(Boolean).join('\n') || null,
-      defenseCity: input.defenseCity?.trim() || null,
-      defenseYear: input.defenseYear ?? null,
-      abstractPt: input.abstractPt?.trim() || null,
-      abstractEn: input.abstractEn?.trim() || null,
-      keywords: input.keywords?.map((item) => item.trim()).filter(Boolean).join('; ') || null,
-    },
+    body: buildProjectApiPayload(input),
   })
 
   return mapApiProject(response)

@@ -1,17 +1,19 @@
 import { X } from 'lucide-react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
 import { useAppShellStore } from '@/shared/services/app-store'
 import { AppSidebar } from '@/shared/components/navigation/app-sidebar'
 import { AppTopbar } from '@/shared/components/navigation/app-topbar'
 import { Button } from '@/shared/ui/button'
 
 export function AppLayout() {
+  const { pathname } = useLocation()
   const { mobileSidebarOpen, setMobileSidebarOpen } = useAppShellStore()
+  const workspaceMode = pathname.startsWith('/editor/')
 
   return (
     <div className="min-h-screen bg-transparent">
       <div className="flex min-h-screen">
-        <div className="hidden md:block">
+        <div className={workspaceMode ? 'hidden' : 'hidden md:block'}>
           <AppSidebar />
         </div>
 
@@ -31,7 +33,7 @@ export function AppLayout() {
         ) : null}
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <AppTopbar />
+          <AppTopbar workspaceMode={workspaceMode} />
           <main className="flex-1">
             <Outlet />
           </main>

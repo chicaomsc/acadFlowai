@@ -17,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -46,12 +47,13 @@ class AuthServiceTest {
 
         when(userRepository.existsByEmail(request.email())).thenReturn(false);
         when(passwordEncoder.encode(request.password())).thenReturn("hash123");
-        when(userRepository.save(any(User.class))).thenAnswer(inv -> {
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> {
             User u = inv.getArgument(0);
             u = User.builder()
                     .id(UUID.randomUUID())
                     .name(u.getName()).email(u.getEmail()).password(u.getPassword())
-                    .role(u.getRole()).plan(u.getPlan()).build();
+                    .role(u.getRole()).plan(u.getPlan())
+                    .createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now()).build();
             return u;
         });
         when(jwtTokenProvider.generateToken(any())).thenReturn("jwt.token.aqui");
@@ -62,6 +64,28 @@ class AuthServiceTest {
         assertThat(response.user().email()).isEqualTo("joao@email.com");
         assertThat(response.user().role()).isEqualTo("STUDENT");
         assertThat(response.user().plan()).isEqualTo("FREE");
+    }
+
+    @Test
+    void shouldRegisterReturnsNonNullCreatedAt() {
+        var request = new RegisterRequest("Ana Costa", "ana@email.com", "senha1234");
+
+        when(userRepository.existsByEmail(request.email())).thenReturn(false);
+        when(passwordEncoder.encode(request.password())).thenReturn("hash");
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> {
+            User u = inv.getArgument(0);
+            u = User.builder()
+                    .id(UUID.randomUUID())
+                    .name(u.getName()).email(u.getEmail()).password(u.getPassword())
+                    .role(u.getRole()).plan(u.getPlan())
+                    .createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now()).build();
+            return u;
+        });
+        when(jwtTokenProvider.generateToken(any())).thenReturn("token");
+
+        var response = authService.register(request);
+
+        assertThat(response.user().createdAt()).isNotNull();
     }
 
     @Test

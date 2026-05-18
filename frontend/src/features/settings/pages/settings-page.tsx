@@ -21,6 +21,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/shared/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs'
 
+function getPlanLabel(plan?: string) {
+  switch (plan) {
+    case 'pro':
+      return 'Pro'
+    case 'free':
+      return 'Free'
+    case 'defense':
+      return 'Defesa'
+    case 'advisor':
+      return 'Orientador'
+    case 'institution':
+      return 'Institution'
+    default:
+      return 'Não informado'
+  }
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const setCurrentUser = useAppShellStore((state) => state.setCurrentUser)
@@ -216,15 +233,17 @@ export function SettingsPage() {
               </Select>
             </div>
             <ToggleRow title="Sugestões automáticas de IA" description="Receber indicações enquanto escreve." />
-            <ToggleRow title="Salvamento automático" description="Persistir rascunhos automaticamente quando houver backend." defaultChecked />
+            <ToggleRow title="Salvamento automático" description="Persistir rascunhos automaticamente durante a escrita." defaultChecked />
           </Section>
         </TabsContent>
 
         <TabsContent value="plan" className="surface-card-strong space-y-5 rounded-[28px] p-6">
           <Section icon={Sparkles} title="Plano atual">
             <div className="rounded-[24px] border border-primary/15 bg-primary/5 px-4 py-4">
-              <p className="font-medium text-foreground">Pro Aluno</p>
-              <p className="mt-1 text-sm text-muted-foreground">IA ilimitada, leitor de PDFs e exportação completa.</p>
+              <p className="font-medium text-foreground">{getPlanLabel(data.plan)}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Informação exibida a partir da sessão atual. Gestão comercial e assinatura ainda não são configuradas nesta tela.
+              </p>
             </div>
           </Section>
         </TabsContent>

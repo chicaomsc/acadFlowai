@@ -28,22 +28,25 @@ describe('project wizard', () => {
     )
 
     await user.type(screen.getByPlaceholderText(/inteligência artificial aplicada à educação/i), 'Novo TCC AcadFlow')
-    await user.click(screen.getAllByRole('combobox')[0])
-    await user.click(await screen.findByRole('option', { name: 'Ciência da Computação' }))
-    await user.click(screen.getAllByRole('combobox')[1])
+    const textboxes = screen.getAllByRole('textbox')
+    await user.type(textboxes[1], 'Subtítulo do projeto')
+    const comboboxes = screen.getAllByRole('combobox')
+    await user.click(comboboxes[0])
     await user.click(await screen.findByRole('option', { name: 'ABNT' }))
-    await user.type(screen.getAllByRole('textbox')[1], 'UFPE')
-    await user.type(screen.getAllByRole('textbox')[2], 'Dra. Ana')
-
-    await user.click(screen.getByRole('button', { name: /próximo/i }))
-    await user.type(screen.getByRole('textbox'), 'Tema focado em IA e TCC')
-    await user.click(screen.getByRole('button', { name: /próximo/i }))
-    await user.type(screen.getByRole('textbox'), 'Como IA pode apoiar TCCs?')
-    await user.click(screen.getByRole('button', { name: /próximo/i }))
+    await user.click(comboboxes[2])
+    await user.click(await screen.findByRole('option', { name: 'Ciência da Computação' }))
+    await user.click(comboboxes[1])
+    await user.click(await screen.findByRole('option', { name: 'Graduação' }))
+    await user.type(textboxes[2], 'UFPE')
+    await user.type(textboxes[3], 'Dra. Ana')
+    await user.type(textboxes[4], 'Recife')
+    await user.type(screen.getByRole('spinbutton'), '2026')
+    await user.type(textboxes[5], 'Tema focado em IA e TCC')
+    await user.type(textboxes[6], 'Como IA pode apoiar TCCs?')
     await user.type(screen.getByPlaceholderText('Objetivo geral'), 'Avaliar uso de IA no fluxo de escrita acadêmica')
     const specificObjectiveInputs = screen.getAllByPlaceholderText(/objetivo específico/i)
     await user.type(specificObjectiveInputs[0], 'Mapear ferramentas')
-    await user.click(screen.getByRole('button', { name: /próximo/i }))
+    await user.type(textboxes[textboxes.length - 1], 'IA; educação')
     await user.click(screen.getByRole('button', { name: /criar projeto/i }))
 
     await waitFor(() => {
@@ -51,9 +54,13 @@ describe('project wizard', () => {
       expect(createProjectMock).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'Novo TCC AcadFlow',
+          subtitle: 'Subtítulo do projeto',
           course: 'Ciência da Computação',
           institution: 'UFPE',
+          academicDegree: 'GRADUACAO',
           advisorName: 'Dra. Ana',
+          defenseCity: 'Recife',
+          defenseYear: 2026,
           norm: 'ABNT',
         }),
       )

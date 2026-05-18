@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { QueryClient, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, BookOpen, CalendarClock, FileStack, Pencil, Trash2, Users } from 'lucide-react'
+import { ArrowRight, BookOpen, CalendarClock, CheckCircle2, FileStack, Pencil, Trash2 } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { archiveProject, projectDetailsQuery, projectsQuery, updateProject } from '@/features/projects/services/projects.service'
 import { clearActiveProjectId, resolveValidActiveProjectId, setActiveProjectId } from '@/shared/services/active-project.service'
@@ -25,7 +25,7 @@ import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select'
 import { Textarea } from '@/shared/ui/textarea'
-import { isProjectNotFoundError } from '@/shared/services/project.service'
+import { academicDegreeOptions, getAcademicDegreeLabel, isProjectNotFoundError } from '@/shared/services/project.service'
 
 export function ProjectDetailsPage() {
   const navigate = useNavigate()
@@ -50,13 +50,12 @@ export function ProjectDetailsPage() {
     advisorName: '',
     deadline: '',
     norm: 'ABNT' as 'ABNT' | 'APA' | 'Vancouver',
+    defenseCity: '',
+    defenseYear: '',
     theme: '',
     researchProblem: '',
     generalObjective: '',
-    defenseCity: '',
-    defenseYear: '',
-    abstractPt: '',
-    abstractEn: '',
+    specificObjectives: '',
     keywords: '',
   })
 
@@ -78,13 +77,12 @@ export function ProjectDetailsPage() {
       advisorName: data.project.advisorName ?? '',
       deadline: toDateInputValue(data.project.deadline),
       norm: data.project.norm,
+      defenseCity: data.project.defenseCity ?? '',
+      defenseYear: data.project.defenseYear ? String(data.project.defenseYear) : '',
       theme: data.project.theme ?? '',
       researchProblem: data.project.researchProblem ?? '',
       generalObjective: data.project.generalObjective ?? '',
-      defenseCity: data.project.defenseCity ?? '',
-      defenseYear: data.project.defenseYear ? String(data.project.defenseYear) : '',
-      abstractPt: data.project.abstractPt ?? '',
-      abstractEn: data.project.abstractEn ?? '',
+      specificObjectives: data.project.specificObjectives?.join('\n') ?? '',
       keywords: data.project.keywords?.join('; ') ?? '',
     })
   }, [data])
@@ -148,6 +146,8 @@ export function ProjectDetailsPage() {
     )
   }
 
+  const project = data.project
+
   async function handleUpdateProject() {
     if (saving) return
 
@@ -156,12 +156,23 @@ export function ProjectDetailsPage() {
 
     try {
       await updateProject(projectId, {
-        ...editForm,
+        title: editForm.title,
+        subtitle: editForm.subtitle,
+        course: editForm.course,
+        institution: editForm.institution,
+        academicDegree: editForm.academicDegree,
+        advisorName: editForm.advisorName,
+        deadline: editForm.deadline,
+        norm: editForm.norm,
+        theme: editForm.theme,
+        researchProblem: editForm.researchProblem,
+        generalObjective: editForm.generalObjective,
+        specificObjectives: editForm.specificObjectives.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+        defenseCity: editForm.defenseCity,
         defenseYear: editForm.defenseYear ? Number(editForm.defenseYear) : undefined,
-        keywords: editForm.keywords
-          .split(/;\s*|,\s*/)
-          .map((item) => item.trim())
-          .filter(Boolean),
+        abstractPt: project.abstractPt ?? '',
+        abstractEn: project.abstractEn ?? '',
+        keywords: editForm.keywords.split(/;\s*|,\s*/).map((item) => item.trim()).filter(Boolean),
       })
 
       await Promise.all([
@@ -240,133 +251,163 @@ export function ProjectDetailsPage() {
               <DialogContent className="max-h-[calc(100vh-48px)] overflow-hidden p-0 sm:max-w-3xl">
                 <DialogHeader className="border-b border-border bg-background px-6 py-5">
                   <DialogTitle>Editar projeto</DialogTitle>
-                  <DialogDescription>Ajuste os dados principais do TCC sem alterar a estrutura atual da tela.</DialogDescription>
+                  <DialogDescription>Ajuste o briefing acadêmico do projeto. Resumo e abstract continuam concentrados no editor documental.</DialogDescription>
                 </DialogHeader>
                 <div className="max-h-[calc(100vh-220px)] overflow-y-auto px-6 py-5">
-                  <div className="grid gap-4 pb-4 md:grid-cols-2">
-                    <Field label="Título">
-                      <Input
-                        value={editForm.title}
-                        onChange={(event) => setEditForm((current) => ({ ...current, title: event.target.value }))}
-                        className="h-12 rounded-2xl"
-                      />
-                    </Field>
-                    <Field label="Subtítulo">
-                      <Input
-                        value={editForm.subtitle}
-                        onChange={(event) => setEditForm((current) => ({ ...current, subtitle: event.target.value }))}
-                        className="h-12 rounded-2xl"
-                      />
-                    </Field>
-                    <Field label="Prazo">
-                      <Input
-                        type="date"
-                        value={editForm.deadline}
-                        onChange={(event) => setEditForm((current) => ({ ...current, deadline: event.target.value }))}
-                        className="h-12 rounded-2xl"
-                      />
-                    </Field>
-                    <Field label="Curso">
-                      <Input
-                        value={editForm.course}
-                        onChange={(event) => setEditForm((current) => ({ ...current, course: event.target.value }))}
-                        className="h-12 rounded-2xl"
-                      />
-                    </Field>
-                    <Field label="Instituição">
-                      <Input
-                        value={editForm.institution}
-                        onChange={(event) => setEditForm((current) => ({ ...current, institution: event.target.value }))}
-                        className="h-12 rounded-2xl"
-                      />
-                    </Field>
-                    <Field label="Grau acadêmico">
-                      <Input
-                        value={editForm.academicDegree}
-                        onChange={(event) => setEditForm((current) => ({ ...current, academicDegree: event.target.value }))}
-                        className="h-12 rounded-2xl"
-                      />
-                    </Field>
-                    <Field label="Orientador">
-                      <Input
-                        value={editForm.advisorName}
-                        onChange={(event) => setEditForm((current) => ({ ...current, advisorName: event.target.value }))}
-                        className="h-12 rounded-2xl"
-                      />
-                    </Field>
-                    <Field label="Norma">
-                      <Select
-                        value={editForm.norm}
-                        onValueChange={(value) => setEditForm((current) => ({ ...current, norm: value as 'ABNT' | 'APA' | 'Vancouver' }))}
-                      >
-                        <SelectTrigger className="h-12 rounded-2xl"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="ABNT">ABNT</SelectItem>
-                          <SelectItem value="APA">APA</SelectItem>
-                          <SelectItem value="Vancouver">Vancouver</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                    <Field label="Cidade da defesa">
-                      <Input
-                        value={editForm.defenseCity}
-                        onChange={(event) => setEditForm((current) => ({ ...current, defenseCity: event.target.value }))}
-                        className="h-12 rounded-2xl"
-                      />
-                    </Field>
-                    <Field label="Ano da defesa">
-                      <Input
-                        type="number"
-                        min="1900"
-                        max="2999"
-                        value={editForm.defenseYear}
-                        onChange={(event) => setEditForm((current) => ({ ...current, defenseYear: event.target.value }))}
-                        className="h-12 rounded-2xl"
-                      />
-                    </Field>
-                    <Field label="Palavras-chave" className="md:col-span-2">
-                      <Input
-                        value={editForm.keywords}
-                        onChange={(event) => setEditForm((current) => ({ ...current, keywords: event.target.value }))}
-                        placeholder="Ex: inteligência artificial; ensino superior; personalização"
-                        className="h-12 rounded-2xl"
-                      />
-                    </Field>
-                    <Field label="Tema" className="md:col-span-2">
-                      <Textarea
-                        value={editForm.theme}
-                        onChange={(event) => setEditForm((current) => ({ ...current, theme: event.target.value }))}
-                        className="min-h-[120px] rounded-[24px]"
-                      />
-                    </Field>
-                    <Field label="Problema de pesquisa" className="md:col-span-2">
-                      <Textarea
-                        value={editForm.researchProblem}
-                        onChange={(event) => setEditForm((current) => ({ ...current, researchProblem: event.target.value }))}
-                        className="min-h-[120px] rounded-[24px]"
-                      />
-                    </Field>
-                    <Field label="Objetivo geral" className="md:col-span-2">
-                      <Textarea
-                        value={editForm.generalObjective}
-                        onChange={(event) => setEditForm((current) => ({ ...current, generalObjective: event.target.value }))}
-                        className="min-h-[120px] rounded-[24px]"
-                      />
-                    </Field>
-                    <Field label="Resumo em português" className="md:col-span-2">
-                      <Textarea
-                        value={editForm.abstractPt}
-                        onChange={(event) => setEditForm((current) => ({ ...current, abstractPt: event.target.value }))}
-                        className="min-h-[120px] rounded-[24px]"
-                      />
-                    </Field>
-                    <Field label="Abstract em inglês" className="md:col-span-2">
-                      <Textarea
-                        value={editForm.abstractEn}
-                        onChange={(event) => setEditForm((current) => ({ ...current, abstractEn: event.target.value }))}
-                        className="min-h-[120px] rounded-[24px]"
-                      />
-                    </Field>
+                  <div className="space-y-6 pb-4">
+                    <ProjectSection title="Identificação" description="Dados centrais para nomear e enquadrar o trabalho.">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <Field label="Título" className="md:col-span-2">
+                          <Input
+                            value={editForm.title}
+                            onChange={(event) => setEditForm((current) => ({ ...current, title: event.target.value }))}
+                            className="h-12 rounded-2xl"
+                          />
+                        </Field>
+                        <Field label="Subtítulo" className="md:col-span-2">
+                          <Input
+                            value={editForm.subtitle}
+                            onChange={(event) => setEditForm((current) => ({ ...current, subtitle: event.target.value }))}
+                            className="h-12 rounded-2xl"
+                          />
+                        </Field>
+                        <Field label="Norma">
+                          <Select
+                            value={editForm.norm}
+                            onValueChange={(value) => setEditForm((current) => ({ ...current, norm: value as 'ABNT' | 'APA' | 'Vancouver' }))}
+                          >
+                            <SelectTrigger className="h-12 rounded-2xl"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ABNT">ABNT</SelectItem>
+                              <SelectItem value="APA">APA</SelectItem>
+                              <SelectItem value="Vancouver">Vancouver</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </Field>
+                        <Field label="Grau acadêmico">
+                          <Select
+                            value={editForm.academicDegree || 'none'}
+                            onValueChange={(value) => setEditForm((current) => ({ ...current, academicDegree: value === 'none' ? '' : value }))}
+                          >
+                            <SelectTrigger className="h-12 rounded-2xl"><SelectValue placeholder="Selecione o grau" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">Não informado</SelectItem>
+                              {academicDegreeOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
+                      </div>
+                    </ProjectSection>
+
+                    <ProjectSection title="Instituição e curso" description="Contexto institucional do projeto.">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <Field label="Instituição">
+                          <Input
+                            value={editForm.institution}
+                            onChange={(event) => setEditForm((current) => ({ ...current, institution: event.target.value }))}
+                            className="h-12 rounded-2xl"
+                          />
+                        </Field>
+                        <Field label="Curso">
+                          <Input
+                            value={editForm.course}
+                            onChange={(event) => setEditForm((current) => ({ ...current, course: event.target.value }))}
+                            className="h-12 rounded-2xl"
+                          />
+                        </Field>
+                      </div>
+                    </ProjectSection>
+
+                    <ProjectSection title="Defesa" description="Orientação, prazo e identificação formal da defesa.">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <Field label="Orientador" className="md:col-span-2">
+                          <Input
+                            value={editForm.advisorName}
+                            onChange={(event) => setEditForm((current) => ({ ...current, advisorName: event.target.value }))}
+                            className="h-12 rounded-2xl"
+                          />
+                        </Field>
+                        <Field label="Prazo">
+                          <Input
+                            type="date"
+                            value={editForm.deadline}
+                            onChange={(event) => setEditForm((current) => ({ ...current, deadline: event.target.value }))}
+                            className="h-12 rounded-2xl"
+                          />
+                        </Field>
+                        <Field label="Cidade da defesa">
+                          <Input
+                            value={editForm.defenseCity}
+                            onChange={(event) => setEditForm((current) => ({ ...current, defenseCity: event.target.value }))}
+                            className="h-12 rounded-2xl"
+                          />
+                        </Field>
+                        <Field label="Ano da defesa">
+                          <Input
+                            type="number"
+                            min="1900"
+                            max="2999"
+                            value={editForm.defenseYear}
+                            onChange={(event) => setEditForm((current) => ({ ...current, defenseYear: event.target.value }))}
+                            className="h-12 rounded-2xl"
+                          />
+                        </Field>
+                      </div>
+                    </ProjectSection>
+
+                    <ProjectSection title="Pesquisa" description="Recorte temático e problema que sustentam o TCC.">
+                      <div className="grid gap-4">
+                        <Field label="Tema">
+                          <Input
+                            value={editForm.theme}
+                            onChange={(event) => setEditForm((current) => ({ ...current, theme: event.target.value }))}
+                            className="h-12 rounded-2xl"
+                          />
+                        </Field>
+                        <Field label="Problema de pesquisa">
+                          <Textarea
+                            value={editForm.researchProblem}
+                            onChange={(event) => setEditForm((current) => ({ ...current, researchProblem: event.target.value }))}
+                            className="min-h-[120px] rounded-[24px]"
+                          />
+                        </Field>
+                      </div>
+                    </ProjectSection>
+
+                    <ProjectSection title="Objetivos" description="Direção do estudo em nível geral e específico.">
+                      <div className="grid gap-4">
+                        <Field label="Objetivo geral">
+                          <Textarea
+                            value={editForm.generalObjective}
+                            onChange={(event) => setEditForm((current) => ({ ...current, generalObjective: event.target.value }))}
+                            className="min-h-[120px] rounded-[24px]"
+                          />
+                        </Field>
+                        <Field label="Objetivos específicos">
+                          <Textarea
+                            value={editForm.specificObjectives}
+                            onChange={(event) => setEditForm((current) => ({ ...current, specificObjectives: event.target.value }))}
+                            className="min-h-[160px] rounded-[24px]"
+                            placeholder="Um objetivo por linha"
+                          />
+                        </Field>
+                      </div>
+                    </ProjectSection>
+
+                    <ProjectSection title="Metadata" description="Campos usados em apresentação, indexação e exportação do projeto.">
+                      <div className="grid gap-4">
+                        <Field label="Palavras-chave">
+                          <Input
+                            value={editForm.keywords}
+                            onChange={(event) => setEditForm((current) => ({ ...current, keywords: event.target.value }))}
+                            className="h-12 rounded-2xl"
+                            placeholder="Ex: inteligência artificial; ensino superior"
+                          />
+                        </Field>
+                      </div>
+                    </ProjectSection>
                   </div>
                 </div>
                 <DialogFooter className="sticky bottom-0 border-t border-border bg-background px-6 py-4">
@@ -418,8 +459,8 @@ export function ProjectDetailsPage() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard title="Progresso" value={`${data.project.progress}%`} helper="Andamento consolidado do projeto" icon={FileStack} />
         <StatCard title="Capítulos" value={data.chapters.length} helper="Estrutura montada com status separado" icon={BookOpen} />
-        <StatCard title="Referências" value={data.references.length} helper="Associadas ao projeto atual" icon={BookOpen} />
-        <StatCard title="Comentários" value={data.comments.length} helper="Retornos do orientador" icon={Users} />
+        <StatCard title="Referências" value={data.project.totalReferences} helper={`${data.project.citedReferences} citadas e ${data.project.pendingReferences} pendentes`} icon={BookOpen} />
+        <StatCard title="Tarefas" value={data.project.totalTasks} helper={`${data.project.completedTasks} concluídas e ${data.project.pendingTasks} pendentes`} icon={CheckCircle2} />
       </div>
 
       <div className="content-grid">
@@ -436,7 +477,7 @@ export function ProjectDetailsPage() {
               </div>
             </div>
             <div className="mt-5 grid gap-4 md:grid-cols-3">
-              <MetaBlock label="Grau acadêmico" value={data.project.academicDegree} />
+              <MetaBlock label="Grau acadêmico" value={getAcademicDegreeLabel(data.project.academicDegree)} />
               <MetaBlock label="Cidade da defesa" value={data.project.defenseCity} />
               <MetaBlock
                 label="Ano da defesa"
@@ -500,13 +541,46 @@ export function ProjectDetailsPage() {
           </SectionCard>
 
           <SectionCard title="Próximos itens">
+            {data.project.timelineTasks.length === 0 ? (
+              <p className="text-sm leading-6 text-muted-foreground">
+                O backend ainda não retornou tarefas para este projeto.
+              </p>
+            ) : (
             <div className="space-y-3">
-              {data.tasks.slice(0, 4).map((task) => (
+              {data.project.timelineTasks.slice(0, 4).map((task) => (
                 <div key={task.id} className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
                   <p className="font-medium text-foreground">{task.title}</p>
                   <p className="mt-1 text-sm text-muted-foreground">{task.status.replace('_', ' ')}</p>
                 </div>
               ))}
+            </div>
+            )}
+          </SectionCard>
+
+          <SectionCard title="Exportação">
+            <div className="space-y-4">
+              <ProgressBar
+                value={data.project.exportProgress}
+                label={data.project.exportReady ? 'Projeto pronto para exportação' : 'Checklist de exportação em andamento'}
+                helper={
+                  data.project.exportReady
+                    ? 'Os requisitos mínimos do backend já foram atendidos.'
+                    : `${data.project.pendingExportItems.length} pendência(s) ainda bloqueiam a exportação.`
+                }
+              />
+              {data.project.pendingExportItems.length > 0 ? (
+                <div className="space-y-3">
+                  {data.project.pendingExportItems.map((item) => (
+                    <div key={item} className="rounded-[22px] border border-border bg-white/70 px-4 py-4 text-sm text-muted-foreground">
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Nenhuma pendência de exportação retornada pelo backend neste momento.
+                </p>
+              )}
             </div>
           </SectionCard>
         </div>
@@ -529,6 +603,26 @@ function Field({
       <Label className="mb-2 block">{label}</Label>
       {children}
     </div>
+  )
+}
+
+function ProjectSection({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description: string
+  children: ReactNode
+}) {
+  return (
+    <section className="rounded-[24px] border border-border bg-muted/20 px-4 py-4 md:px-5 md:py-5">
+      <div className="mb-4 space-y-1.5">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">{title}</p>
+        <p className="text-sm leading-6 text-muted-foreground">{description}</p>
+      </div>
+      {children}
+    </section>
   )
 }
 
