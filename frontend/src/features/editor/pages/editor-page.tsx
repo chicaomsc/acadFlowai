@@ -63,6 +63,25 @@ function getChapterIdFromNode(nodeId: EditorNodeId) {
   return isChapterNode(nodeId) ? nodeId.replace('chapter:', '') : null
 }
 
+function getRouteNodeFromEditorNode(nodeId: EditorNodeId): string {
+  if (nodeId === 'abstractPt') return 'summary'
+  if (nodeId === 'abstractEn') return 'abstract'
+  if (nodeId === 'references') return 'references'
+  return getChapterIdFromNode(nodeId) ?? ''
+}
+
+function getEditorNodeFromRouteNode(
+  routeNode: string | undefined,
+  availableChapterIds: string[],
+): EditorNodeId | null {
+  if (!routeNode) return null
+  if (routeNode === 'summary') return 'abstractPt'
+  if (routeNode === 'abstract') return 'abstractEn'
+  if (routeNode === 'references') return 'references'
+  if (availableChapterIds.includes(routeNode)) return `chapter:${routeNode}`
+  return null
+}
+
 function normalizeTextStatus(wordCount: number, minimumWords: number): DocumentStatus {
   if (wordCount === 0) return 'pending'
   if (wordCount < minimumWords) return 'writing'
@@ -256,7 +275,7 @@ async function invalidateEditorQueries(queryClient: ReturnType<typeof useQueryCl
 
 export function EditorPage() {
   const navigate = useNavigate()
-  const { projectId = '' } = useParams()
+  const { projectId = '', nodeId: routeNodeId } = useParams<{ projectId: string; nodeId?: string }>()
   const projectQuery = useQuery(editorProjectQuery(projectId))
   const chaptersListQuery = useQuery(chaptersQuery(projectId))
   const referencesListQuery = useQuery(referencesQuery(projectId))
@@ -281,9 +300,14 @@ export function EditorPage() {
     () => chapters.filter((chapter) => chapter.type !== 'references'),
     [chapters],
   )
+  const textualChapterIds = useMemo(
+    () => textualChapters.map((chapter) => chapter.id),
+    [textualChapters],
+  )
   const referencesCount = referencesListQuery.data?.length ?? 0
   const selectedChapterId = selectedNodeId ? getChapterIdFromNode(selectedNodeId) : null
   const selectedChapterQuery = useQuery(chapterQuery(selectedChapterId))
+  const previousProjectIdRef = useRef<string | null>(null)
 
   const selectedChapter = useMemo(
     () => selectedChapterQuery.data ?? textualChapters.find((chapter) => chapter.id === selectedChapterId) ?? textualChapters[0] ?? null,
@@ -340,20 +364,41 @@ export function EditorPage() {
   useEffect(() => {
     if (!textualChapters.length) return
 
-    if (!selectedNodeId) {
-      setSelectedNodeId(`chapter:${textualChapters[0].id}`)
+    const fallbackNodeId: EditorNodeId = `chapter:${textualChapters[0].id}`
+    const projectChanged = previousProjectIdRef.current !== projectId
+    const routeNode = getEditorNodeFromRouteNode(routeNodeId, textualChapterIds)
+
+    if (routeNodeId) {
+      if (routeNode) {
+        if (selectedNodeId !== routeNode) {
+          setSelectedNodeId(routeNode)
+        }
+      } else {
+        setSelectedNodeId(fallbackNodeId)
+        navigate(`/editor/${projectId}/${getRouteNodeFromEditorNode(fallbackNodeId)}`, { replace: true })
+      }
+
+      previousProjectIdRef.current = projectId
+      return
+    }
+
+    if (projectChanged || !selectedNodeId) {
+      setSelectedNodeId(fallbackNodeId)
+      previousProjectIdRef.current = projectId
       return
     }
 
     if (isChapterNode(selectedNodeId)) {
       const currentChapterId = getChapterIdFromNode(selectedNodeId)
-      const chapterStillExists = textualChapters.some((chapter) => chapter.id === currentChapterId)
+      const chapterStillExists = textualChapterIds.includes(currentChapterId ?? '')
 
       if (!chapterStillExists) {
-        setSelectedNodeId(`chapter:${textualChapters[0].id}`)
+        setSelectedNodeId(fallbackNodeId)
       }
     }
-  }, [selectedNodeId, textualChapters])
+
+    previousProjectIdRef.current = projectId
+  }, [navigate, projectId, routeNodeId, selectedNodeId, textualChapterIds, textualChapters])
 
   useEffect(() => {
     if (selectedChapter && hydratedChapterIdRef.current !== selectedChapter.id) {
@@ -587,8 +632,9 @@ export function EditorPage() {
 
   async function handleSelectNode(nextNodeId: EditorNodeId) {
     await saveCurrentContent()
-    setSelectedNodeId(nextNodeId)
     setAbstractFeedback(null)
+    setSelectedNodeId(nextNodeId)
+    navigate(`/editor/${projectId}/${getRouteNodeFromEditorNode(nextNodeId)}`)
   }
 
   async function handleSaveProjectText(target: 'abstractPt' | 'abstractEn') {

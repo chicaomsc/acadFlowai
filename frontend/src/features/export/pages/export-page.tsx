@@ -86,7 +86,6 @@ export function ExportPage() {
     references: true,
     appendix: false,
   })
-  const [exportProgress, setExportProgress] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [downloadInfo, setDownloadInfo] = useState<{ fileName: string; downloadUrl: string } | null>(null)
@@ -102,7 +101,7 @@ export function ExportPage() {
   if (!activeProjectId) {
     return (
       <div className="page-shell">
-        <PageHeader eyebrow="Delivery" title="Exportação" description="Entrega final em formatos mockados com checklist acadêmico e opções ABNT." />
+        <PageHeader eyebrow="Delivery" title="Exportação" description="Validação final do trabalho antes da geração do arquivo." />
         <EmptyState
           icon={FileText}
           title="Selecione um projeto para exportar"
@@ -133,7 +132,7 @@ export function ExportPage() {
   if (!data) {
     return (
       <div className="page-shell">
-        <PageHeader eyebrow="Delivery" title="Exportação" description="Entrega final em formatos mockados com checklist acadêmico e opções ABNT." />
+        <PageHeader eyebrow="Delivery" title="Exportação" description="Validação final do trabalho antes da geração do arquivo." />
         <EmptyState
           icon={FileText}
           title="Nenhum dado de exportação disponível"
@@ -277,7 +276,10 @@ export function ExportPage() {
               ) : null}
               {exporting ? (
                 <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
-                  <ProgressBar value={exportProgress} label="Gerando arquivo" helper={`${exportProgress}%`} />
+                  <p className="text-sm font-medium text-foreground">Gerando DOCX...</p>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    Validando o projeto e preparando o arquivo final para download.
+                  </p>
                 </div>
               ) : null}
               {downloading ? (
@@ -352,14 +354,8 @@ export function ExportPage() {
                   setDownloadSuccess('')
                   setExporting(true)
                   setDownloadInfo(null)
-                  setExportProgress(12)
 
                   try {
-                    for (const step of [32, 58, 84, 100]) {
-                      await new Promise((resolve) => window.setTimeout(resolve, 180))
-                      setExportProgress(step)
-                    }
-
                     const artifact = await generateExportArtifact(activeProjectId, format)
                     if (artifact) {
                       setDownloadInfo({

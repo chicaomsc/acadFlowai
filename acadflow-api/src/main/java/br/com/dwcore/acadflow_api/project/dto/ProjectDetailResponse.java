@@ -4,6 +4,11 @@ import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterStatus;
 import br.com.dwcore.acadflow_api.chapter.dto.ChapterResponse;
 import br.com.dwcore.acadflow_api.project.domain.Project;
+import br.com.dwcore.acadflow_api.reference.domain.Reference;
+import br.com.dwcore.acadflow_api.reference.dto.ReferenceResponse;
+import br.com.dwcore.acadflow_api.timeline.domain.TaskStatus;
+import br.com.dwcore.acadflow_api.timeline.domain.TimelineTask;
+import br.com.dwcore.acadflow_api.timeline.dto.TaskResponse;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -34,11 +39,38 @@ public record ProjectDetailResponse(
         int totalChapters,
         int completedChapters,
         List<ChapterResponse> chapters,
+        List<ReferenceResponse> references,
+        List<TaskResponse> timelineTasks,
+        int totalReferences,
+        int citedReferences,
+        int pendingReferences,
+        int totalTasks,
+        int completedTasks,
+        int pendingTasks,
+        boolean exportReady,
+        int exportProgress,
+        List<String> pendingExportItems,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {
     public static ProjectDetailResponse from(Project project) {
+        return from(project, List.of(), List.of(), false, 0, List.of());
+    }
+
+    public static ProjectDetailResponse from(
+            Project project,
+            List<Reference> references,
+            List<TimelineTask> tasks,
+            boolean exportReady,
+            int exportProgress,
+            List<String> pendingExportItems) {
+
         List<Chapter> chapters = project.getChapters();
+        int totalRef = references.size();
+        int cited = (int) references.stream().filter(Reference::isHasCitation).count();
+        int totalTask = tasks.size();
+        int doneTasks = (int) tasks.stream().filter(t -> t.getStatus() == TaskStatus.DONE).count();
+
         return new ProjectDetailResponse(
                 project.getId(),
                 project.getTitle(),
@@ -63,6 +95,17 @@ public record ProjectDetailResponse(
                 chapters.size(),
                 (int) chapters.stream().filter(c -> c.getStatus() == ChapterStatus.APPROVED).count(),
                 chapters.stream().map(ChapterResponse::from).toList(),
+                references.stream().map(ReferenceResponse::from).toList(),
+                tasks.stream().map(TaskResponse::from).toList(),
+                totalRef,
+                cited,
+                totalRef - cited,
+                totalTask,
+                doneTasks,
+                totalTask - doneTasks,
+                exportReady,
+                exportProgress,
+                pendingExportItems,
                 project.getCreatedAt(),
                 project.getUpdatedAt()
         );

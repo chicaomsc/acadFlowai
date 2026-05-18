@@ -90,7 +90,7 @@ export function ReferencesPage() {
       <PageHeader
         eyebrow="Bibliografia"
         title="Referências"
-        description="Base centralizada para fontes acadêmicas, associação com capítulos e geração ABNT mockada."
+        description="Base centralizada para fontes acadêmicas, associação com capítulos e formatação ABNT."
         action={
           <Dialog
             open={dialogOpen}
@@ -118,7 +118,7 @@ export function ReferencesPage() {
             <DialogContent onOpenAutoFocus={(event) => event.preventDefault()}>
               <DialogHeader>
                 <DialogTitle>{editingId ? 'Editar referência' : 'Adicionar referência'}</DialogTitle>
-                <DialogDescription>Estrutura mockada para futura persistência via backend.</DialogDescription>
+                <DialogDescription>Cadastre, ajuste e associe referências ao projeto e aos capítulos.</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4">
                 <div className="space-y-2">
@@ -184,7 +184,7 @@ export function ReferencesPage() {
                       setDialogOpen(false)
                     }}
                   >
-                    Gerar ABNT
+                    {editingId ? 'Atualizar referência' : 'Salvar referência'}
                   </Button>
                 </div>
               </div>

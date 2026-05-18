@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { QueryClient, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, BookOpen, CalendarClock, FileStack, Pencil, Trash2, Users } from 'lucide-react'
+import { ArrowRight, BookOpen, CalendarClock, CheckCircle2, FileStack, Pencil, Trash2 } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { archiveProject, projectDetailsQuery, projectsQuery, updateProject } from '@/features/projects/services/projects.service'
 import { clearActiveProjectId, resolveValidActiveProjectId, setActiveProjectId } from '@/shared/services/active-project.service'
@@ -25,7 +25,7 @@ import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select'
 import { Textarea } from '@/shared/ui/textarea'
-import { isProjectNotFoundError } from '@/shared/services/project.service'
+import { academicDegreeOptions, getAcademicDegreeLabel, isProjectNotFoundError } from '@/shared/services/project.service'
 
 export function ProjectDetailsPage() {
   const navigate = useNavigate()
@@ -285,11 +285,18 @@ export function ProjectDetailsPage() {
                           </Select>
                         </Field>
                         <Field label="Grau acadêmico">
-                          <Input
-                            value={editForm.academicDegree}
-                            onChange={(event) => setEditForm((current) => ({ ...current, academicDegree: event.target.value }))}
-                            className="h-12 rounded-2xl"
-                          />
+                          <Select
+                            value={editForm.academicDegree || 'none'}
+                            onValueChange={(value) => setEditForm((current) => ({ ...current, academicDegree: value === 'none' ? '' : value }))}
+                          >
+                            <SelectTrigger className="h-12 rounded-2xl"><SelectValue placeholder="Selecione o grau" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">Não informado</SelectItem>
+                              {academicDegreeOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </Field>
                       </div>
                     </ProjectSection>
@@ -452,8 +459,8 @@ export function ProjectDetailsPage() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard title="Progresso" value={`${data.project.progress}%`} helper="Andamento consolidado do projeto" icon={FileStack} />
         <StatCard title="Capítulos" value={data.chapters.length} helper="Estrutura montada com status separado" icon={BookOpen} />
-        <StatCard title="Referências" value={data.references.length} helper="Associadas ao projeto atual" icon={BookOpen} />
-        <StatCard title="Comentários" value={data.comments.length} helper="Retornos do orientador" icon={Users} />
+        <StatCard title="Referências" value={data.project.totalReferences} helper={`${data.project.citedReferences} citadas e ${data.project.pendingReferences} pendentes`} icon={BookOpen} />
+        <StatCard title="Tarefas" value={data.project.totalTasks} helper={`${data.project.completedTasks} concluídas e ${data.project.pendingTasks} pendentes`} icon={CheckCircle2} />
       </div>
 
       <div className="content-grid">
@@ -470,7 +477,7 @@ export function ProjectDetailsPage() {
               </div>
             </div>
             <div className="mt-5 grid gap-4 md:grid-cols-3">
-              <MetaBlock label="Grau acadêmico" value={data.project.academicDegree} />
+              <MetaBlock label="Grau acadêmico" value={getAcademicDegreeLabel(data.project.academicDegree)} />
               <MetaBlock label="Cidade da defesa" value={data.project.defenseCity} />
               <MetaBlock
                 label="Ano da defesa"
@@ -534,13 +541,46 @@ export function ProjectDetailsPage() {
           </SectionCard>
 
           <SectionCard title="Próximos itens">
+            {data.project.timelineTasks.length === 0 ? (
+              <p className="text-sm leading-6 text-muted-foreground">
+                O backend ainda não retornou tarefas para este projeto.
+              </p>
+            ) : (
             <div className="space-y-3">
-              {data.tasks.slice(0, 4).map((task) => (
+              {data.project.timelineTasks.slice(0, 4).map((task) => (
                 <div key={task.id} className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
                   <p className="font-medium text-foreground">{task.title}</p>
                   <p className="mt-1 text-sm text-muted-foreground">{task.status.replace('_', ' ')}</p>
                 </div>
               ))}
+            </div>
+            )}
+          </SectionCard>
+
+          <SectionCard title="Exportação">
+            <div className="space-y-4">
+              <ProgressBar
+                value={data.project.exportProgress}
+                label={data.project.exportReady ? 'Projeto pronto para exportação' : 'Checklist de exportação em andamento'}
+                helper={
+                  data.project.exportReady
+                    ? 'Os requisitos mínimos do backend já foram atendidos.'
+                    : `${data.project.pendingExportItems.length} pendência(s) ainda bloqueiam a exportação.`
+                }
+              />
+              {data.project.pendingExportItems.length > 0 ? (
+                <div className="space-y-3">
+                  {data.project.pendingExportItems.map((item) => (
+                    <div key={item} className="rounded-[22px] border border-border bg-white/70 px-4 py-4 text-sm text-muted-foreground">
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Nenhuma pendência de exportação retornada pelo backend neste momento.
+                </p>
+              )}
             </div>
           </SectionCard>
         </div>

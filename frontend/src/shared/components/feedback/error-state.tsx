@@ -9,7 +9,7 @@ interface ErrorStateProps {
 
 export function ErrorState({
   title = 'Não foi possível carregar esta área',
-  description = 'Verifique a estrutura dos mocks ou tente novamente.',
+  description = 'Tente novamente em instantes ou recarregue a página.',
   onRetry,
 }: ErrorStateProps) {
   return (

@@ -88,6 +88,7 @@ export const router = createBrowserRouter([
       { path: '/projects/:projectId', element: <ProjectDetailsPage /> },
       { path: '/editor', element: <EditorRedirect /> },
       { path: '/editor/:projectId', element: <EditorPage /> },
+      { path: '/editor/:projectId/:nodeId', element: <EditorPage /> },
       { path: '/references', element: <ReferencesPage /> },
       { path: '/pdf-reader', element: <PdfReaderPage /> },
       { path: '/ai-assistant', element: <AiAssistantPage /> },

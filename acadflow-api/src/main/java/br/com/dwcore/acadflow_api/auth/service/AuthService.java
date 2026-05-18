@@ -38,7 +38,7 @@ public class AuthService {
                 .plan(UserPlan.FREE)
                 .build();
 
-        user = userRepository.save(user);
+        user = userRepository.saveAndFlush(user);
         String token = jwtTokenProvider.generateToken(user.getEmail());
         return new AuthResponse(token, UserResponse.from(user));
     }

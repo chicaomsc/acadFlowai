@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Check, Sparkles } from 'lucide-react'
 import { createProject } from '@/features/projects/services/projects.service'
+import { academicDegreeOptions } from '@/shared/services/project.service'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
@@ -15,7 +16,6 @@ const norms = ['ABNT', 'APA', 'Vancouver']
 export function ProjectWizard() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [generating, setGenerating] = useState(false)
   const [creating, setCreating] = useState(false)
   const [form, setForm] = useState({
     title: '',
@@ -34,37 +34,6 @@ export function ProjectWizard() {
     specificObjectives: ['', '', ''],
     keywords: '',
   })
-
-  async function fillByAi(field: 'theme' | 'problem' | 'objectives') {
-    setGenerating(true)
-    await new Promise((resolve) => setTimeout(resolve, 900))
-    if (field === 'theme') {
-      setForm((current) => ({
-        ...current,
-        theme: 'Sistemas de tutoria inteligente para personalização do ensino superior brasileiro.',
-      }))
-    }
-    if (field === 'problem') {
-      setForm((current) => ({
-        ...current,
-        researchProblem:
-          'Como ferramentas de IA podem apoiar a personalização do ensino em cursos de graduação com restrições de tempo e recursos?',
-      }))
-    }
-    if (field === 'objectives') {
-      setForm((current) => ({
-        ...current,
-        generalObjective:
-          'Analisar limites e oportunidades do uso de IA na personalização do processo de ensino-aprendizagem em universidades brasileiras.',
-        specificObjectives: [
-          'Mapear ferramentas de IA aplicadas à educação superior.',
-          'Identificar barreiras de adoção institucional.',
-          'Propor diretrizes para uso acadêmico responsável.',
-        ],
-      }))
-    }
-    setGenerating(false)
-  }
 
   async function handleCreateProject() {
     if (creating) return
@@ -127,7 +96,17 @@ export function ProjectWizard() {
                 </Select>
               </Field>
               <Field label="Grau acadêmico">
-                <Input value={form.academicDegree} onChange={(event) => setForm({ ...form, academicDegree: event.target.value })} className="h-12 rounded-2xl" />
+                <Select value={form.academicDegree || 'none'} onValueChange={(value) => setForm({ ...form, academicDegree: value === 'none' ? '' : value })}>
+                  <SelectTrigger className="h-12 rounded-2xl">
+                    <SelectValue placeholder="Selecione o grau" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Não informado</SelectItem>
+                    {academicDegreeOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
             </div>
           </ProjectFormSection>
@@ -173,20 +152,23 @@ export function ProjectWizard() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <Label>Tema de pesquisa</Label>
-                <Button variant="outline" onClick={() => void fillByAi('theme')} disabled={generating}>
+                <Button variant="outline" disabled>
                   <Sparkles className="h-4 w-4" />
-                  Sugerir com IA
+                  IA em breve
                 </Button>
               </div>
               <Textarea value={form.theme} onChange={(event) => setForm({ ...form, theme: event.target.value })} className="min-h-[160px] rounded-[24px]" />
               <div className="flex items-center justify-between">
                 <Label>Problema de pesquisa</Label>
-                <Button variant="outline" onClick={() => void fillByAi('problem')} disabled={generating}>
+                <Button variant="outline" disabled>
                   <Sparkles className="h-4 w-4" />
-                  Refinar com IA
+                  IA em breve
                 </Button>
               </div>
               <Textarea value={form.researchProblem} onChange={(event) => setForm({ ...form, researchProblem: event.target.value })} className="min-h-[160px] rounded-[24px]" />
+              <p className="text-sm text-muted-foreground">
+                Assistência de IA para preenchimento do briefing ainda está em evolução nesta etapa.
+              </p>
             </div>
           </ProjectFormSection>
 
@@ -194,9 +176,9 @@ export function ProjectWizard() {
             <div className="space-y-5">
               <div className="flex items-center justify-between">
                 <Label>Objetivos</Label>
-                <Button variant="outline" onClick={() => void fillByAi('objectives')} disabled={generating}>
+                <Button variant="outline" disabled>
                   <Sparkles className="h-4 w-4" />
-                  Preencher com IA
+                  IA em breve
                 </Button>
               </div>
               <Textarea value={form.generalObjective} onChange={(event) => setForm({ ...form, generalObjective: event.target.value })} placeholder="Objetivo geral" className="min-h-[120px] rounded-[24px]" />

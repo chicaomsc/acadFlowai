@@ -158,8 +158,9 @@ export function AppTopbar({ workspaceMode = false }: AppTopbarProps) {
             <Input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Buscar conteúdos..."
+              placeholder="Busca global em desenvolvimento"
               className="h-11 rounded-[18px] border-white/75 bg-white/88 pl-10 shadow-sm"
+              readOnly
             />
           </div>
 
@@ -178,8 +179,11 @@ export function AppTopbar({ workspaceMode = false }: AppTopbarProps) {
               <div className="border-b border-border px-4 py-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold">Notificações</h3>
-                  <Badge variant="secondary">{unreadCount} novas</Badge>
+                  <Badge variant="secondary">Prévia local</Badge>
                 </div>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  Painel visual em evolução. Esses itens ainda não representam eventos em tempo real do backend.
+                </p>
               </div>
               <div className="max-h-[320px] overflow-y-auto">
                 {notifications.map((notification) => (
