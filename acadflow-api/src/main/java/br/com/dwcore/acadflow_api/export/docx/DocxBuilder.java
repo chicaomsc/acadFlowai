@@ -1,6 +1,7 @@
 package br.com.dwcore.acadflow_api.export.docx;
 
 import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
+import br.com.dwcore.acadflow_api.citation.domain.Citation;
 import br.com.dwcore.acadflow_api.export.docx.renderer.*;
 import br.com.dwcore.acadflow_api.project.domain.Project;
 import br.com.dwcore.acadflow_api.reference.domain.Reference;
@@ -10,6 +11,8 @@ import org.springframework.stereotype.Component;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 @Component
 public class DocxBuilder {
@@ -22,6 +25,11 @@ public class DocxBuilder {
     private final ReferenceRenderer referenceRenderer = new ReferenceRenderer();
 
     public byte[] build(Project project, List<Chapter> chapters, List<Reference> references) throws IOException {
+        return build(project, chapters, references, Map.of());
+    }
+
+    public byte[] build(Project project, List<Chapter> chapters, List<Reference> references,
+                        Map<UUID, Citation> citationLookup) throws IOException {
         try (XWPFDocument doc = new XWPFDocument()) {
             DocxHelper.setupPageMargins(doc);
 
@@ -36,7 +44,7 @@ public class DocxBuilder {
 
             summaryRenderer.render(doc, chapters);
 
-            chapterRenderer.render(doc, chapters);
+            chapterRenderer.render(doc, chapters, citationLookup);
 
             if (!references.isEmpty()) {
                 DocxHelper.pageBreak(doc);

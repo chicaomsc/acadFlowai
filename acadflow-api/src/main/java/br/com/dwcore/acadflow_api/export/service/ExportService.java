@@ -3,6 +3,8 @@ package br.com.dwcore.acadflow_api.export.service;
 import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
 import br.com.dwcore.acadflow_api.chapter.repository.ChapterRepository;
+import br.com.dwcore.acadflow_api.citation.domain.Citation;
+import br.com.dwcore.acadflow_api.citation.repository.CitationRepository;
 import br.com.dwcore.acadflow_api.export.docx.DocxBuilder;
 import br.com.dwcore.acadflow_api.export.dto.CreateExportRequest;
 import br.com.dwcore.acadflow_api.export.dto.ExportArtifactResponse;
@@ -31,8 +33,10 @@ import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -51,6 +55,7 @@ public class ExportService {
     private final ProjectRepository projectRepository;
     private final ChapterRepository chapterRepository;
     private final ReferenceRepository referenceRepository;
+    private final CitationRepository citationRepository;
     private final UserService userService;
     private final DocxBuilder docxBuilder;
 
@@ -89,8 +94,11 @@ public class ExportService {
         String fileName = generateFileName(project.getTitle(), request.format());
         List<Chapter> chapters = chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId());
         List<Reference> references = referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId());
+        List<Citation> citations = citationRepository.findByProjectId(project.getId());
+        Map<UUID, Citation> citationLookup = citations.stream()
+                .collect(Collectors.toMap(Citation::getId, c -> c));
         try {
-            byte[] content = docxBuilder.build(project, chapters, references);
+            byte[] content = docxBuilder.build(project, chapters, references, citationLookup);
             saveFile(project.getId(), fileName, content);
         } catch (IOException e) {
             throw new UncheckedIOException("Falha ao gerar arquivo DOCX", e);
