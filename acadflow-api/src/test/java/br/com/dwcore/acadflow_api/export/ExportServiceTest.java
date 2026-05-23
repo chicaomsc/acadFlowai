@@ -4,6 +4,7 @@ import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterStatus;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
 import br.com.dwcore.acadflow_api.chapter.repository.ChapterRepository;
+import br.com.dwcore.acadflow_api.citation.repository.CitationRepository;
 import br.com.dwcore.acadflow_api.export.docx.DocxBuilder;
 import br.com.dwcore.acadflow_api.export.dto.CreateExportRequest;
 import br.com.dwcore.acadflow_api.export.service.ExportService;
@@ -49,6 +50,7 @@ class ExportServiceTest {
     @Mock private ProjectRepository projectRepository;
     @Mock private ChapterRepository chapterRepository;
     @Mock private ReferenceRepository referenceRepository;
+    @Mock private CitationRepository citationRepository;
     @Mock private UserService userService;
     @Mock private DocxBuilder docxBuilder;
 
@@ -190,7 +192,8 @@ class ExportServiceTest {
                 .thenReturn(buildRequiredChapters(project));
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
-        when(docxBuilder.build(any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(docxBuilder.build(any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
 
         var artifact = exportService.createExport(
                 new CreateExportRequest(project.getId(), "docx"), user.getEmail());
@@ -252,7 +255,8 @@ class ExportServiceTest {
                 .thenReturn(buildRequiredChapters(project));
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
-        when(docxBuilder.build(any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(docxBuilder.build(any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
 
         var artifact = exportService.createExport(
                 new CreateExportRequest(project.getId(), "docx"), user.getEmail());
