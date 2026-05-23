@@ -10,6 +10,7 @@ export interface ReferenceInput {
   year: number
   journal?: string
   publisher?: string
+  url?: string
   chapterId?: string
   hasCitation?: boolean
 }
@@ -104,7 +105,7 @@ function buildReferencePayload(input: ReferenceInput, projectId: string) {
     journal: input.journal ?? null,
     publisher: input.publisher ?? null,
     doi: null,
-    url: null,
+    url: input.url ?? null,
     accessDate: null,
     hasCitation: input.hasCitation ?? false,
   }
@@ -183,6 +184,7 @@ export async function createReference(input: ReferenceInput, projectId?: string)
     year: input.year,
     journal: input.journal,
     publisher: input.publisher,
+    url: input.url,
     chapterIds: input.chapterId ? [input.chapterId] : [],
     primaryChapterId: input.chapterId,
     abntFormatted: buildAbnt({
@@ -217,6 +219,7 @@ export async function updateReference(referenceId: string, input: ReferenceInput
         year: input.year,
         journal: input.journal ?? null,
         publisher: input.publisher ?? null,
+        url: input.url ?? null,
         hasCitation: input.hasCitation,
       },
     })
@@ -233,6 +236,7 @@ export async function updateReference(referenceId: string, input: ReferenceInput
   reference.year = input.year
   reference.journal = input.journal
   reference.publisher = input.publisher
+  reference.url = input.url
   reference.chapterIds = input.chapterId ? [input.chapterId] : []
   reference.primaryChapterId = input.chapterId
   reference.hasCitation = input.hasCitation ?? reference.hasCitation

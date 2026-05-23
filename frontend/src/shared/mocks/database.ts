@@ -4,6 +4,7 @@ import type {
   AdvisorComment,
   AiSuggestion,
   Chapter,
+  Citation,
   Notification,
   PDFDocument,
   Plan,
@@ -19,6 +20,7 @@ export interface MockDatabase {
   advisors: Advisor[]
   projects: Project[]
   chapters: Chapter[]
+  citations: Citation[]
   references: Reference[]
   timelineTasks: TimelineTask[]
   advisorComments: AdvisorComment[]
@@ -165,6 +167,21 @@ const references: Reference[] = [
     abntFormatted:
       'VANLEHN, K. The relative effectiveness of human tutoring, intelligent tutoring systems, and other tutoring systems. Educational Psychologist, v. 46, n. 4, p. 197-221, 2011.',
     hasCitation: false,
+  },
+]
+
+const citations: Citation[] = [
+  {
+    id: 'citation-1',
+    projectId: 'project-1',
+    chapterId: 'chapter-2',
+    referenceId: 'reference-2',
+    type: 'indirect',
+    displayMode: 'parenthetical',
+    page: '42',
+    reference: references[1],
+    createdAt: new Date('2024-03-20'),
+    updatedAt: new Date('2024-03-20'),
   },
 ]
 
@@ -515,6 +532,7 @@ export const mockDb: MockDatabase = {
   advisors,
   projects,
   chapters,
+  citations,
   references,
   timelineTasks,
   advisorComments,

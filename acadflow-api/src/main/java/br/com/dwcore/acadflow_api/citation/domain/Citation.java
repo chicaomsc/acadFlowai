@@ -39,6 +39,11 @@ public class Citation {
     @Column(nullable = false)
     private CitationType type;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "citation_display_mode", nullable = false)
+    @Builder.Default
+    private CitationDisplayMode displayMode = CitationDisplayMode.PARENTHETICAL;
+
     @Column(name = "page_number")
     private String pageNumber;
 

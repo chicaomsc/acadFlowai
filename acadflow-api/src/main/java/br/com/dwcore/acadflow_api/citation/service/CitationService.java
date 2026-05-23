@@ -1,6 +1,7 @@
 package br.com.dwcore.acadflow_api.citation.service;
 
 import br.com.dwcore.acadflow_api.citation.domain.Citation;
+import br.com.dwcore.acadflow_api.citation.domain.CitationDisplayMode;
 import br.com.dwcore.acadflow_api.citation.domain.CitationType;
 import br.com.dwcore.acadflow_api.citation.dto.CitationResponse;
 import br.com.dwcore.acadflow_api.citation.dto.CreateCitationRequest;
@@ -38,10 +39,9 @@ public class CitationService {
         Chapter chapter = chapterRepository.findById(chapterId)
                 .orElseThrow(() -> new ResourceNotFoundException("Capítulo não encontrado"));
 
-        Project project = chapter.getProject();
-        if (!project.getUser().getId().equals(user.getId())) {
-            throw new ResourceNotFoundException("Capítulo não encontrado");
-        }
+        // BUG-01: validates ownership AND that project is not soft-deleted (deletedAt IS NULL)
+        Project project = projectRepository.findByIdAndUserId(chapter.getProject().getId(), user.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Capítulo não encontrado"));
 
         Reference reference = referenceRepository.findById(request.referenceId())
                 .orElseThrow(() -> new ResourceNotFoundException("Referência não encontrada"));
@@ -57,6 +57,7 @@ public class CitationService {
                 .chapter(chapter)
                 .reference(reference)
                 .type(request.type())
+                .displayMode(request.displayMode() != null ? request.displayMode() : CitationDisplayMode.PARENTHETICAL)
                 .pageNumber(request.pageNumber())
                 .apudAuthor(request.apudAuthor())
                 .apudYear(request.apudYear())
@@ -79,9 +80,9 @@ public class CitationService {
         Chapter chapter = chapterRepository.findById(chapterId)
                 .orElseThrow(() -> new ResourceNotFoundException("Capítulo não encontrado"));
 
-        if (!chapter.getProject().getUser().getId().equals(user.getId())) {
-            throw new ResourceNotFoundException("Capítulo não encontrado");
-        }
+        // BUG-01: validates ownership AND that project is not soft-deleted
+        projectRepository.findByIdAndUserId(chapter.getProject().getId(), user.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Capítulo não encontrado"));
 
         return citationRepository.findByChapterIdOrderByCreatedAtAsc(chapterId)
                 .stream().map(CitationResponse::from).toList();

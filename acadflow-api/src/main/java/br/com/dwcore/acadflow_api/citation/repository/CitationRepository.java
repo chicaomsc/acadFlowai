@@ -12,7 +12,5 @@ public interface CitationRepository extends JpaRepository<Citation, UUID> {
 
     List<Citation> findByProjectId(UUID projectId);
 
-    boolean existsByReferenceId(UUID referenceId);
-
     long countByReferenceId(UUID referenceId);
 }
