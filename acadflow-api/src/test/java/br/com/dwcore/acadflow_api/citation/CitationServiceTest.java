@@ -5,6 +5,7 @@ import br.com.dwcore.acadflow_api.chapter.domain.ChapterStatus;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
 import br.com.dwcore.acadflow_api.chapter.repository.ChapterRepository;
 import br.com.dwcore.acadflow_api.citation.domain.Citation;
+import br.com.dwcore.acadflow_api.citation.domain.CitationDisplayMode;
 import br.com.dwcore.acadflow_api.citation.domain.CitationType;
 import br.com.dwcore.acadflow_api.citation.dto.CitationResponse;
 import br.com.dwcore.acadflow_api.citation.dto.CreateCitationRequest;
@@ -84,6 +85,13 @@ class CitationServiceTest {
                 .type(CitationType.INDIRECT).build();
     }
 
+    private Citation buildCitation(Project project, Chapter chapter, Reference reference,
+                                   CitationType type, CitationDisplayMode displayMode) {
+        return Citation.builder().id(UUID.randomUUID())
+                .project(project).chapter(chapter).reference(reference)
+                .type(type).displayMode(displayMode).build();
+    }
+
     @Test
     void shouldCreateIndirectCitation() {
         User user = buildUser("aluno@email.com");
@@ -93,16 +101,59 @@ class CitationServiceTest {
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId())).thenReturn(Optional.of(project));
         when(referenceRepository.findById(reference.getId())).thenReturn(Optional.of(reference));
         Citation saved = buildCitation(project, chapter, reference);
         when(citationRepository.save(any())).thenReturn(saved);
 
         CreateCitationRequest request = new CreateCitationRequest(
-                CitationType.INDIRECT, reference.getId(), null, null, null, null);
+                CitationType.INDIRECT, reference.getId(), null, null, null, null, null);
         CitationResponse response = citationService.create(chapter.getId(), request, user.getEmail());
 
         assertThat(response).isNotNull();
         assertThat(response.type()).isEqualTo("INDIRECT");
+    }
+
+    @Test
+    void shouldCreateNarrativeCitation() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildProject(user);
+        Chapter chapter = buildChapter(project);
+        Reference reference = buildReference(project, false);
+
+        when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
+        when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId())).thenReturn(Optional.of(project));
+        when(referenceRepository.findById(reference.getId())).thenReturn(Optional.of(reference));
+        Citation saved = buildCitation(project, chapter, reference, CitationType.INDIRECT, CitationDisplayMode.NARRATIVE);
+        when(citationRepository.save(any())).thenReturn(saved);
+
+        CreateCitationRequest request = new CreateCitationRequest(
+                CitationType.INDIRECT, reference.getId(), CitationDisplayMode.NARRATIVE, null, null, null, null);
+        CitationResponse response = citationService.create(chapter.getId(), request, user.getEmail());
+
+        assertThat(response.displayMode()).isEqualTo("NARRATIVE");
+    }
+
+    @Test
+    void shouldDefaultToParentheticalWhenDisplayModeIsNull() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildProject(user);
+        Chapter chapter = buildChapter(project);
+        Reference reference = buildReference(project, false);
+
+        when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
+        when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId())).thenReturn(Optional.of(project));
+        when(referenceRepository.findById(reference.getId())).thenReturn(Optional.of(reference));
+        Citation saved = buildCitation(project, chapter, reference);
+        when(citationRepository.save(any())).thenReturn(saved);
+
+        CreateCitationRequest request = new CreateCitationRequest(
+                CitationType.INDIRECT, reference.getId(), null, null, null, null, null);
+        CitationResponse response = citationService.create(chapter.getId(), request, user.getEmail());
+
+        assertThat(response.displayMode()).isEqualTo("PARENTHETICAL");
     }
 
     @Test
@@ -114,11 +165,12 @@ class CitationServiceTest {
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId())).thenReturn(Optional.of(project));
         when(referenceRepository.findById(reference.getId())).thenReturn(Optional.of(reference));
         when(citationRepository.save(any())).thenReturn(buildCitation(project, chapter, reference));
 
         CreateCitationRequest request = new CreateCitationRequest(
-                CitationType.INDIRECT, reference.getId(), null, null, null, null);
+                CitationType.INDIRECT, reference.getId(), null, null, null, null, null);
         citationService.create(chapter.getId(), request, user.getEmail());
 
         verify(referenceRepository).save(reference);
@@ -134,11 +186,12 @@ class CitationServiceTest {
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId())).thenReturn(Optional.of(project));
         when(referenceRepository.findById(reference.getId())).thenReturn(Optional.of(reference));
         when(citationRepository.save(any())).thenReturn(buildCitation(project, chapter, reference));
 
         CreateCitationRequest request = new CreateCitationRequest(
-                CitationType.INDIRECT, reference.getId(), null, null, null, null);
+                CitationType.INDIRECT, reference.getId(), null, null, null, null, null);
         citationService.create(chapter.getId(), request, user.getEmail());
 
         verify(referenceRepository, never()).save(reference);
@@ -189,7 +242,7 @@ class CitationServiceTest {
         when(chapterRepository.findById(chapterId)).thenReturn(Optional.empty());
 
         CreateCitationRequest request = new CreateCitationRequest(
-                CitationType.INDIRECT, UUID.randomUUID(), null, null, null, null);
+                CitationType.INDIRECT, UUID.randomUUID(), null, null, null, null, null);
 
         assertThatThrownBy(() -> citationService.create(chapterId, request, user.getEmail()))
                 .isInstanceOf(ResourceNotFoundException.class)
@@ -207,7 +260,7 @@ class CitationServiceTest {
         when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
 
         CreateCitationRequest request = new CreateCitationRequest(
-                CitationType.INDIRECT, UUID.randomUUID(), null, null, null, null);
+                CitationType.INDIRECT, UUID.randomUUID(), null, null, null, null, null);
 
         assertThatThrownBy(() -> citationService.create(chapter.getId(), request, intruder.getEmail()))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -222,10 +275,11 @@ class CitationServiceTest {
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId())).thenReturn(Optional.of(project));
         when(referenceRepository.findById(missingRefId)).thenReturn(Optional.empty());
 
         CreateCitationRequest request = new CreateCitationRequest(
-                CitationType.INDIRECT, missingRefId, null, null, null, null);
+                CitationType.INDIRECT, missingRefId, null, null, null, null, null);
 
         assertThatThrownBy(() -> citationService.create(chapter.getId(), request, user.getEmail()))
                 .isInstanceOf(ResourceNotFoundException.class)
@@ -242,10 +296,11 @@ class CitationServiceTest {
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId())).thenReturn(Optional.of(project));
         when(referenceRepository.findById(foreignRef.getId())).thenReturn(Optional.of(foreignRef));
 
         CreateCitationRequest request = new CreateCitationRequest(
-                CitationType.INDIRECT, foreignRef.getId(), null, null, null, null);
+                CitationType.INDIRECT, foreignRef.getId(), null, null, null, null, null);
 
         assertThatThrownBy(() -> citationService.create(chapter.getId(), request, user.getEmail()))
                 .isInstanceOf(BusinessException.class)
@@ -261,10 +316,11 @@ class CitationServiceTest {
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId())).thenReturn(Optional.of(project));
         when(referenceRepository.findById(reference.getId())).thenReturn(Optional.of(reference));
 
         CreateCitationRequest request = new CreateCitationRequest(
-                CitationType.APUD, reference.getId(), null, null, "2010", null);
+                CitationType.APUD, reference.getId(), null, null, null, "2010", null);
 
         assertThatThrownBy(() -> citationService.create(chapter.getId(), request, user.getEmail()))
                 .isInstanceOf(BusinessException.class)
@@ -280,10 +336,11 @@ class CitationServiceTest {
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId())).thenReturn(Optional.of(project));
         when(referenceRepository.findById(reference.getId())).thenReturn(Optional.of(reference));
 
         CreateCitationRequest request = new CreateCitationRequest(
-                CitationType.DIRECT_SHORT, reference.getId(), "p. 10", null, null, null);
+                CitationType.DIRECT_SHORT, reference.getId(), null, "p. 10", null, null, null);
 
         assertThatThrownBy(() -> citationService.create(chapter.getId(), request, user.getEmail()))
                 .isInstanceOf(BusinessException.class)
@@ -300,6 +357,7 @@ class CitationServiceTest {
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId())).thenReturn(Optional.of(project));
         when(citationRepository.findByChapterIdOrderByCreatedAtAsc(chapter.getId()))
                 .thenReturn(List.of(citation));
 
@@ -325,6 +383,42 @@ class CitationServiceTest {
         List<CitationResponse> result = citationService.findByProjectId(project.getId(), user.getEmail());
 
         assertThat(result).hasSize(1);
+    }
+
+    @Test
+    void shouldReturn404WhenCreateCitationOnSoftDeletedProject() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildProject(user);
+        Chapter chapter = buildChapter(project);
+        Reference reference = buildReference(project, false);
+
+        when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
+        when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId()))
+                .thenReturn(Optional.empty()); // project soft-deleted
+
+        CreateCitationRequest request = new CreateCitationRequest(
+                CitationType.INDIRECT, reference.getId(), null, null, null, null, null);
+
+        assertThatThrownBy(() -> citationService.create(chapter.getId(), request, user.getEmail()))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessageContaining("Capítulo não encontrado");
+    }
+
+    @Test
+    void shouldReturn404WhenListingCitationsOnSoftDeletedProject() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildProject(user);
+        Chapter chapter = buildChapter(project);
+
+        when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
+        when(chapterRepository.findById(chapter.getId())).thenReturn(Optional.of(chapter));
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId()))
+                .thenReturn(Optional.empty()); // project soft-deleted
+
+        assertThatThrownBy(() -> citationService.findByChapterId(chapter.getId(), user.getEmail()))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessageContaining("Capítulo não encontrado");
     }
 
     @Test

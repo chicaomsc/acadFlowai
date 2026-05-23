@@ -36,12 +36,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ExportService {
+
+    private static final Pattern CITE_MARKER = Pattern.compile(
+            "\\[\\[@CITE:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\]\\]"
+    );
 
     private static final Set<ChapterType> REQUIRED_TEXTUAL_TYPES = Set.of(
             ChapterType.INTRODUCTION,
@@ -134,6 +140,7 @@ public class ExportService {
         int metadataCoverage = checkMetadata(project, pendingItems, completedItems);
         int chapterCoverage = checkTextualChapters(chapters, pendingItems, completedItems);
         int referenceCoverage = checkReferences(references, pendingItems, completedItems);
+        checkOrphanCitationMarkers(project.getId(), chapters, pendingItems);
 
         return new ExportStatusResponse(
                 project.getId(),
@@ -221,6 +228,25 @@ public class ExportService {
         }
 
         return (int) (withCitation * 100 / references.size());
+    }
+
+    private void checkOrphanCitationMarkers(UUID projectId, List<Chapter> chapters, List<String> pending) {
+        List<Citation> citations = citationRepository.findByProjectId(projectId);
+        Set<UUID> knownIds = citations.stream()
+                .map(Citation::getId)
+                .collect(Collectors.toSet());
+
+        for (Chapter chapter : chapters) {
+            if (chapter.getContent() == null || chapter.getContent().isBlank()) continue;
+            Matcher m = CITE_MARKER.matcher(chapter.getContent());
+            while (m.find()) {
+                UUID markerId = UUID.fromString(m.group(1));
+                if (!knownIds.contains(markerId)) {
+                    pending.add("Capítulo '" + chapter.getTitle() + "' possui citação inválida ou removida");
+                    break;
+                }
+            }
+        }
     }
 
     private Project getOwnedProject(UUID projectId, String userEmail) {

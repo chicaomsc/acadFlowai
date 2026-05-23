@@ -1,0 +1,2 @@
+ALTER TABLE citations
+    ADD COLUMN citation_display_mode VARCHAR(30) NOT NULL DEFAULT 'PARENTHETICAL';

@@ -4,6 +4,9 @@ import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterStatus;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
 import br.com.dwcore.acadflow_api.chapter.repository.ChapterRepository;
+import br.com.dwcore.acadflow_api.citation.domain.Citation;
+import br.com.dwcore.acadflow_api.citation.domain.CitationDisplayMode;
+import br.com.dwcore.acadflow_api.citation.domain.CitationType;
 import br.com.dwcore.acadflow_api.citation.repository.CitationRepository;
 import br.com.dwcore.acadflow_api.export.docx.DocxBuilder;
 import br.com.dwcore.acadflow_api.export.dto.CreateExportRequest;
@@ -132,6 +135,7 @@ class ExportServiceTest {
                         buildChapter(project, ChapterType.METHODOLOGY, "Metodologia", null)));
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of());
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "pdf", user.getEmail());
 
@@ -153,6 +157,7 @@ class ExportServiceTest {
                 .thenReturn(buildRequiredChapters(project));
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "pdf", user.getEmail());
 
@@ -175,6 +180,7 @@ class ExportServiceTest {
                 .thenReturn(List.of(buildChapter(project, null)));
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of());
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
 
         assertThatThrownBy(() -> exportService.createExport(
                 new CreateExportRequest(project.getId(), "pdf"), user.getEmail()))
@@ -216,6 +222,7 @@ class ExportServiceTest {
                 .thenReturn(buildRequiredChapters(project));
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
 
         assertThatThrownBy(() -> exportService.createExport(
                 new CreateExportRequest(project.getId(), "pdf"), user.getEmail()))
@@ -233,6 +240,7 @@ class ExportServiceTest {
                 .thenReturn(buildRequiredChapters(project));
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
 
         assertThatThrownBy(() -> exportService.createExport(
                 new CreateExportRequest(project.getId(), "slides"), user.getEmail()))
@@ -298,6 +306,7 @@ class ExportServiceTest {
                 .thenReturn(List.of(
                         buildReference(project, true),
                         buildReference(project, false)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
 
@@ -318,6 +327,7 @@ class ExportServiceTest {
                 .thenReturn(buildRequiredChapters(project));
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "pdf", user.getEmail());
 
@@ -342,10 +352,57 @@ class ExportServiceTest {
                 .thenReturn(chapters);
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "pdf", user.getEmail());
 
         assertThat(status.ready()).isTrue();
         assertThat(status.chapterCoverage()).isEqualTo(100);
+    }
+
+    @Test
+    void shouldBlockExportWhenChapterHasOrphanCitationMarker() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID orphanId = UUID.randomUUID();
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String withOrphan = "Texto com marcador [[@CITE:" + orphanId + "]] inválido.";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withOrphan));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isFalse();
+        assertThat(status.pendingItems()).anyMatch(s -> s.contains("citação inválida"));
+    }
+
+    @Test
+    void shouldNotBlockWhenAllCitationMarkersAreKnown() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID knownId = UUID.randomUUID();
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String withKnown = "Texto com citação [[@CITE:" + knownId + "]] válida.";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withKnown));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+
+        Citation knownCitation = Citation.builder()
+                .id(knownId).type(CitationType.INDIRECT)
+                .displayMode(CitationDisplayMode.PARENTHETICAL).build();
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of(knownCitation));
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isTrue();
+        assertThat(status.pendingItems()).noneMatch(s -> s.contains("citação inválida"));
     }
 }

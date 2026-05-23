@@ -9,6 +9,8 @@ export type PDFProcessingStatus = 'uploading' | 'processing' | 'completed' | 'er
 export type TaskPriority = 'low' | 'medium' | 'high'
 export type TaskStatus = 'todo' | 'in_progress' | 'completed'
 export type ExportFormat = 'docx' | 'pdf' | 'slides'
+export type CitationType = 'indirect' | 'direct_short' | 'direct_long' | 'apud'
+export type CitationDisplayMode = 'parenthetical' | 'narrative'
 
 export interface User {
   id: string
@@ -87,6 +89,23 @@ export interface Reference {
   primaryChapterId?: string
   abntFormatted?: string
   hasCitation: boolean
+}
+
+export interface Citation {
+  id: string
+  projectId: string
+  chapterId: string
+  referenceId: string
+  type: CitationType
+  displayMode?: CitationDisplayMode
+  citationDisplayMode?: CitationDisplayMode
+  page?: string
+  quotedText?: string
+  apudAuthor?: string
+  apudYear?: string
+  reference?: Reference
+  createdAt?: Date
+  updatedAt?: Date
 }
 
 export interface TimelineTask {
