@@ -8,6 +8,7 @@ import {
 } from '@/shared/services/api-mappers'
 import { apiClient } from '@/shared/services/api-client'
 import type {
+  AcademicTemplateProfile,
   Advisor,
   Chapter,
   ChapterType,
@@ -28,6 +29,19 @@ export const academicDegreeOptions: Array<{ value: AcademicDegreeValue; label: s
   { value: 'DOUTORADO', label: 'Doutorado' },
 ]
 
+export const academicTemplateOptions: Array<{ value: AcademicTemplateProfile; label: string; helper: string }> = [
+  {
+    value: 'ABNT_GENERIC',
+    label: 'ABNT Genérico',
+    helper: 'Estrutura acadêmica padrão com aderência geral à ABNT.',
+  },
+  {
+    value: 'FEMAF',
+    label: 'FEMAF',
+    helper: 'Modelo institucional com capa, folha de rosto e estrutura próprias da FEMAF.',
+  },
+]
+
 export interface CreateProjectInput {
   title: string
   subtitle?: string
@@ -37,6 +51,7 @@ export interface CreateProjectInput {
   advisorName?: string
   deadline?: string
   norm: Project['norm']
+  templateProfile: AcademicTemplateProfile
   theme: string
   researchProblem: string
   generalObjective: string
@@ -57,6 +72,7 @@ export interface UpdateProjectInput {
   advisorName?: string
   deadline?: string
   norm: Project['norm']
+  templateProfile: AcademicTemplateProfile
   theme?: string
   researchProblem?: string
   generalObjective?: string
@@ -101,6 +117,10 @@ export function getAcademicDegreeLabel(value?: string | null) {
   return academicDegreeOptions.find((option) => option.value === normalized)?.label ?? value ?? ''
 }
 
+export function getAcademicTemplateLabel(value?: string | null) {
+  return academicTemplateOptions.find((option) => option.value === value)?.label ?? 'ABNT Genérico'
+}
+
 function normalizeDefenseYear(value?: number | null) {
   if (typeof value !== 'number' || Number.isNaN(value)) return null
   return Number.isFinite(value) ? Math.trunc(value) : null
@@ -136,6 +156,7 @@ function buildProjectApiPayload(input: CreateProjectInput | UpdateProjectInput) 
     advisorName: normalizeText(input.advisorName),
     deadline: normalizeDeadline(input.deadline),
     norm: input.norm,
+    templateProfile: input.templateProfile ?? 'ABNT_GENERIC',
     theme: normalizeText(input.theme),
     researchProblem: normalizeText(input.researchProblem),
     generalObjective: normalizeText(input.generalObjective),
@@ -319,6 +340,7 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectD
         academicDegree: input.academicDegree?.trim() || '',
         advisorId: advisor?.id,
         norm: input.norm,
+        templateProfile: input.templateProfile ?? 'ABNT_GENERIC',
         deadline,
         status: 'planning',
         progress: 0,
@@ -416,6 +438,7 @@ export async function updateProject(projectId: string, input: UpdateProjectInput
       project.advisorId = advisor?.id
       project.deadline = input.deadline ? new Date(input.deadline) : project.deadline
       project.norm = input.norm
+      project.templateProfile = input.templateProfile ?? project.templateProfile
       project.theme = input.theme?.trim() ?? project.theme
       project.researchProblem = input.researchProblem?.trim() ?? project.researchProblem
       project.generalObjective = input.generalObjective?.trim() ?? project.generalObjective

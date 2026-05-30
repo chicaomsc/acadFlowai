@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Download, FileText, Presentation, Settings2 } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { exportStatusQuery } from '@/features/export/services/export.service'
-import { getActiveProjectId } from '@/shared/services/active-project.service'
+import { projectDetailsQuery } from '@/features/projects/services/projects.service'
+import { getActiveProjectId, setActiveProjectId } from '@/shared/services/active-project.service'
 import { downloadExportArtifact, generateExportArtifact } from '@/shared/services/export.service'
+import { getAcademicTemplateLabel } from '@/shared/services/project.service'
 import { EmptyState } from '@/shared/components/feedback/empty-state'
 import { ErrorState } from '@/shared/components/feedback/error-state'
 import { LoadingState } from '@/shared/components/feedback/loading-state'
@@ -80,7 +82,12 @@ function classifyPendingItem(item: string): PendingSectionKey {
 }
 
 export function ExportPage() {
-  const [format, setFormat] = useState<'docx' | 'pdf' | 'slides'>('docx')
+  const { projectId: routeProjectId } = useParams<{ projectId?: string }>()
+  const [searchParams] = useSearchParams()
+  const requestedFormat = searchParams.get('format')
+  const [format, setFormat] = useState<'docx' | 'pdf' | 'slides'>(
+    requestedFormat === 'pdf' || requestedFormat === 'slides' ? requestedFormat : 'docx',
+  )
   const [options, setOptions] = useState({
     toc: true,
     references: true,
@@ -92,7 +99,24 @@ export function ExportPage() {
   const [downloadSuccess, setDownloadSuccess] = useState('')
   const [exportError, setExportError] = useState('')
   const [downloadError, setDownloadError] = useState('')
-  const activeProjectId = getActiveProjectId() ?? undefined
+  const activeProjectId = routeProjectId ?? getActiveProjectId() ?? undefined
+
+  useEffect(() => {
+    if (routeProjectId) {
+      setActiveProjectId(routeProjectId)
+    }
+  }, [routeProjectId])
+
+  useEffect(() => {
+    if (requestedFormat === 'pdf' || requestedFormat === 'slides' || requestedFormat === 'docx') {
+      setFormat(requestedFormat)
+    }
+  }, [requestedFormat])
+
+  const projectDetails = useQuery({
+    ...projectDetailsQuery(activeProjectId ?? ''),
+    enabled: Boolean(activeProjectId),
+  })
   const { data, isLoading, isError, refetch } = useQuery({
     ...exportStatusQuery(activeProjectId, format),
     enabled: Boolean(activeProjectId),
@@ -150,6 +174,19 @@ export function ExportPage() {
   const canExport = data.ready && data.pendingItems.length === 0
   const docxRealAvailable = format === 'docx'
   const canGenerateArtifact = canExport && docxRealAvailable
+  const appliedTemplateLabel = getAcademicTemplateLabel(projectDetails.data?.project.templateProfile)
+  const projectTitle = projectDetails.data?.project.title ?? 'Projeto sem título'
+  const projectStatus = (projectDetails.data?.project.status ?? 'planning') as keyof typeof statusLabel
+  const projectUpdatedAt = projectDetails.data?.project.updatedAt
+    ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).format(projectDetails.data.project.updatedAt)
+    : 'Não disponível'
+  const statusLabel = {
+    planning: 'Planejamento',
+    writing: 'Em escrita',
+    review: 'Em revisão',
+    defense: 'Defesa',
+    completed: 'Concluído',
+  } as const
   const groupedPendingItems = pendingSections
     .map((section) => ({
       ...section,
@@ -159,7 +196,36 @@ export function ExportPage() {
 
   return (
     <div className="page-shell">
-      <PageHeader eyebrow="Delivery" title="Exportação" description="Validação final do trabalho com geração real de DOCX quando o projeto estiver pronto." />
+      <PageHeader
+        eyebrow="Delivery"
+        title="Exportação"
+        description="Validação final do trabalho com geração real de DOCX quando o projeto estiver pronto."
+      />
+
+      <SectionCard title="Projeto em exportação" description="Confirme o contexto antes de gerar o arquivo final.">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Exportando projeto</p>
+            <p className="mt-2 text-base font-semibold text-foreground">{projectTitle}</p>
+          </div>
+          <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Modelo acadêmico</p>
+            <p className="mt-2 text-base font-semibold text-foreground">{appliedTemplateLabel}</p>
+          </div>
+          <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Status</p>
+            <p className="mt-2 text-base font-semibold text-foreground">{statusLabel[projectStatus]}</p>
+          </div>
+          <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Última atualização</p>
+            <p className="mt-2 text-base font-semibold text-foreground">{projectUpdatedAt}</p>
+          </div>
+        </div>
+        <div className="mt-4 rounded-[22px] border border-primary/15 bg-primary/5 px-4 py-4">
+          <p className="text-sm font-medium text-foreground">Você está exportando o projeto {projectTitle}</p>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">O arquivo será gerado com o modelo {appliedTemplateLabel} aplicado a este projeto.</p>
+        </div>
+      </SectionCard>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
@@ -237,6 +303,7 @@ export function ExportPage() {
                   {format === 'slides' ? <Presentation className="h-5 w-5 text-primary" /> : format === 'pdf' ? <FileText className="h-5 w-5 text-primary" /> : <Settings2 className="h-5 w-5 text-primary" />}
                   <p className="font-medium text-foreground">Arquivo selecionado: {format.toUpperCase()}</p>
                 </div>
+                <p className="mt-2 text-sm text-muted-foreground">Exportando com modelo {appliedTemplateLabel}</p>
               </div>
               {data.pendingItems.length > 0 ? (
                 <div className="rounded-[22px] border border-amber-100 bg-amber-50/70 px-4 py-4">

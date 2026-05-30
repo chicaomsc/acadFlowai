@@ -2,15 +2,17 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ExportPage } from '@/features/export/pages/export-page'
-import { renderWithProviders, renderWithRouter } from '@/test/render-utils'
+import { renderWithRouter } from '@/test/render-utils'
 
 const getActiveProjectIdMock = vi.fn()
+const setActiveProjectIdMock = vi.fn()
 const generateExportArtifactMock = vi.fn()
 const downloadExportArtifactMock = vi.fn()
 const exportStatusQueryMock = vi.fn()
 
 vi.mock('@/shared/services/active-project.service', () => ({
   getActiveProjectId: () => getActiveProjectIdMock(),
+  setActiveProjectId: (...args: unknown[]) => setActiveProjectIdMock(...args),
 }))
 
 vi.mock('@/shared/services/export.service', () => ({
@@ -22,9 +24,60 @@ vi.mock('@/features/export/services/export.service', () => ({
   exportStatusQuery: (...args: unknown[]) => exportStatusQueryMock(...args),
 }))
 
+vi.mock('@/features/projects/services/projects.service', () => ({
+  projectDetailsQuery: (projectId: string) => ({
+    queryKey: ['project-details', projectId],
+    queryFn: async () => ({
+      project: {
+        id: projectId,
+        title: 'Projeto ativo',
+        subtitle: '',
+        course: 'Direito',
+        institution: 'FEMAF',
+        academicDegree: 'GRADUACAO',
+        advisorName: 'Profa. Maria',
+        norm: 'ABNT',
+        templateProfile: 'FEMAF',
+        deadline: new Date('2026-12-10'),
+        status: 'writing',
+        progress: 90,
+        createdAt: new Date('2026-01-01'),
+        updatedAt: new Date('2026-05-01'),
+        theme: '',
+        researchProblem: '',
+        generalObjective: '',
+        specificObjectives: [],
+        defenseCity: '',
+        defenseYear: 2026,
+        abstractPt: '',
+        abstractEn: '',
+        keywords: [],
+        userId: 'user-1',
+        chapterIds: [],
+        referenceIds: [],
+        timelineTaskIds: [],
+        advisorCommentIds: [],
+        references: [],
+        timelineTasks: [],
+        totalReferences: 0,
+        citedReferences: 0,
+        pendingReferences: 0,
+        totalTasks: 0,
+        completedTasks: 0,
+        pendingTasks: 0,
+        exportReady: true,
+        exportProgress: 100,
+        pendingExportItems: [],
+      },
+      chapters: [],
+    }),
+  }),
+}))
+
 describe('export page behavior', () => {
   beforeEach(() => {
     getActiveProjectIdMock.mockReset()
+    setActiveProjectIdMock.mockReset()
     generateExportArtifactMock.mockReset()
     downloadExportArtifactMock.mockReset()
     exportStatusQueryMock.mockReset()
@@ -59,7 +112,7 @@ describe('export page behavior', () => {
     getActiveProjectIdMock.mockReturnValue('project-1')
     generateExportArtifactMock.mockRejectedValue(new Error('Falha simulada ao exportar.'))
 
-    renderWithProviders(<ExportPage />)
+    renderWithRouter([{ path: '/projects/:projectId/export', element: <ExportPage /> }], ['/projects/project-1/export'])
 
     expect(await screen.findByRole('heading', { name: 'Exportação' })).toBeInTheDocument()
 
@@ -84,7 +137,7 @@ describe('export page behavior', () => {
     })
     downloadExportArtifactMock.mockRejectedValue(new Error('Falha ao baixar o DOCX autenticado.'))
 
-    renderWithProviders(<ExportPage />)
+    renderWithRouter([{ path: '/projects/:projectId/export', element: <ExportPage /> }], ['/projects/project-1/export'])
 
     expect(await screen.findByRole('heading', { name: 'Exportação' })).toBeInTheDocument()
 
@@ -123,7 +176,7 @@ describe('export page behavior', () => {
       }),
     }))
 
-    renderWithProviders(<ExportPage />)
+    renderWithRouter([{ path: '/projects/:projectId/export', element: <ExportPage /> }], ['/projects/project-1/export'])
 
     expect(await screen.findByText('Metadata acadêmica')).toBeInTheDocument()
     expect(screen.getByText('Resumo')).toBeInTheDocument()
@@ -143,7 +196,7 @@ describe('export page behavior', () => {
     const user = userEvent.setup()
     getActiveProjectIdMock.mockReturnValue('project-1')
 
-    renderWithProviders(<ExportPage />)
+    renderWithRouter([{ path: '/projects/:projectId/export', element: <ExportPage /> }], ['/projects/project-1/export'])
 
     expect(await screen.findByRole('heading', { name: 'Exportação' })).toBeInTheDocument()
 
@@ -152,5 +205,29 @@ describe('export page behavior', () => {
     expect(await screen.findByText('Formato ainda não liberado')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Gerar DOCX' })).toBeDisabled()
     expect(generateExportArtifactMock).not.toHaveBeenCalled()
+  })
+
+  it('exibe o template aplicado na ação final de exportação', async () => {
+    getActiveProjectIdMock.mockReturnValue('project-1')
+
+    renderWithRouter([{ path: '/projects/:projectId/export', element: <ExportPage /> }], ['/projects/project-1/export'])
+
+    expect(await screen.findByText('Projeto em exportação')).toBeInTheDocument()
+    expect(screen.getByText('Exportando projeto')).toBeInTheDocument()
+    expect(screen.getByText('Projeto ativo')).toBeInTheDocument()
+    expect(await screen.findByText('Exportando com modelo FEMAF')).toBeInTheDocument()
+    expect(screen.getByText('Você está exportando o projeto Projeto ativo')).toBeInTheDocument()
+  })
+
+  it('permite usar a rota contextual por projectId', async () => {
+    getActiveProjectIdMock.mockReturnValue(null)
+
+    renderWithRouter(
+      [{ path: '/projects/:projectId/export', element: <ExportPage /> }],
+      ['/projects/project-1/export'],
+    )
+
+    expect(await screen.findByText('Projeto ativo')).toBeInTheDocument()
+    expect(screen.getByText('Exportando com modelo FEMAF')).toBeInTheDocument()
   })
 })

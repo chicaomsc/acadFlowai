@@ -60,6 +60,42 @@ function EditorRedirect() {
   return <Navigate to={resolvedProjectId ? `/editor/${resolvedProjectId}` : '/projects/new'} replace />
 }
 
+function ExportRedirect() {
+  const { data, isLoading, isError, refetch } = useQuery(projectsQuery)
+  const storedProjectId = getStoredActiveProjectId()
+  const resolvedProjectId = resolveValidActiveProjectId(
+    (data ?? []).map((project) => project.id),
+    storedProjectId,
+  )
+
+  useEffect(() => {
+    if (isLoading || isError) return
+
+    if (!resolvedProjectId) {
+      clearActiveProjectId()
+      return
+    }
+
+    if (resolvedProjectId !== storedProjectId) {
+      setActiveProjectId(resolvedProjectId)
+    }
+  }, [isError, isLoading, resolvedProjectId, storedProjectId])
+
+  if (isLoading) {
+    return <div className="page-shell"><LoadingState /></div>
+  }
+
+  if (isError) {
+    return (
+      <div className="page-shell">
+        <ErrorState onRetry={() => void refetch()} />
+      </div>
+    )
+  }
+
+  return <Navigate to={resolvedProjectId ? `/projects/${resolvedProjectId}/export` : '/projects/new'} replace />
+}
+
 export const router = createBrowserRouter([
   {
     path: '/',
@@ -94,7 +130,8 @@ export const router = createBrowserRouter([
       { path: '/ai-assistant', element: <AiAssistantPage /> },
       { path: '/timeline', element: <TimelinePage /> },
       { path: '/advisor', element: <AdvisorPage /> },
-      { path: '/export', element: <ExportPage /> },
+      { path: '/export', element: <ExportRedirect /> },
+      { path: '/projects/:projectId/export', element: <ExportPage /> },
       { path: '/billing', element: <BillingPage /> },
       { path: '/settings', element: <SettingsPage /> },
     ],

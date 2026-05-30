@@ -59,6 +59,7 @@ export interface ApiProjectResponse {
   academicDegree?: string | null
   advisorName?: string | null
   norm: string
+  templateProfile?: string | null
   deadline?: string | null
   theme?: string | null
   researchProblem?: string | null
@@ -246,6 +247,7 @@ export function mapApiProject(project: ApiProjectResponse): Project & { advisorN
     institution: project.institution,
     academicDegree: project.academicDegree ?? '',
     norm: project.norm as Project['norm'],
+    templateProfile: project.templateProfile === 'FEMAF' ? 'FEMAF' : 'ABNT_GENERIC',
     deadline: new Date(project.deadline ?? project.updatedAt),
     status: normalizeProjectStatus(project.status, project.progress),
     progress: project.progress ?? Math.round(completedRatio * 100),

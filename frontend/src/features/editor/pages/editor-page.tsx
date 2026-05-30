@@ -22,9 +22,11 @@ import {
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { chapterCitationsQuery, projectCitationsQuery } from '@/features/editor/services/citations.service'
 import { chapterQuery, chaptersQuery, editorProjectQuery } from '@/features/editor/services/editor.service'
+import { chapterFiguresQuery, projectFiguresQuery } from '@/features/editor/services/figures.service'
 import { referencesQuery } from '@/features/references/services/references.service'
 import { clearActiveProjectId, resolveValidActiveProjectId, setActiveProjectId } from '@/shared/services/active-project.service'
 import { createCitation, deleteCitation } from '@/shared/services/citation.service'
+import { createFigure, deleteFigure, getFigureImage } from '@/shared/services/figure.service'
 import { createReference } from '@/shared/services/reference.service'
 import { projectsQuery } from '@/features/projects/services/projects.service'
 import { updateChapterContent } from '@/shared/services/chapter.service'
@@ -57,7 +59,7 @@ import {
 } from '@/shared/ui/select'
 import { Textarea } from '@/shared/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
-import type { Chapter, Citation, CitationDisplayMode, CitationType, Reference } from '@/shared/types/contracts'
+import type { Chapter, Citation, CitationDisplayMode, CitationType, Figure, Reference } from '@/shared/types/contracts'
 
 const responses: Record<string, string> = {
   improve:
@@ -79,7 +81,7 @@ const chapterTargets = {
 } as const
 
 type DocumentStatus = 'completed' | 'writing' | 'pending'
-type ProjectNodeId = 'abstractPt' | 'abstractEn' | 'references'
+type ProjectNodeId = 'abstractPt' | 'abstractEn' | 'references' | 'figures'
 type EditorNodeId = ProjectNodeId | `chapter:${string}`
 type CitationFormState = {
   referenceId: string
@@ -92,7 +94,15 @@ type CitationFormState = {
 }
 type ChapterEditorHandle = {
   focusAtEnd: () => void
+  focusAtOffset: (offset: number) => void
   insertCitation: (citationId: string, citation?: Citation) => string
+  insertFigure: (figureId: string, figure?: Figure) => { value: string; caretOffset: number }
+}
+type FigureFormState = {
+  file: File | null
+  caption: string
+  sourceText: string
+  widthPercent: Figure['widthPercent']
 }
 type QuickReferenceFormState = {
   type: 'article' | 'book' | 'website'
@@ -104,6 +114,7 @@ type QuickReferenceFormState = {
 }
 
 const CITE_MARKER_REGEX = /\[\[@CITE:([^\]]+)\]\]/g
+const FIG_MARKER_REGEX = /\[\[@FIG:([^\]]+)\]\]/g
 const defaultCitationFormState: CitationFormState = {
   referenceId: '',
   type: 'indirect',
@@ -112,6 +123,12 @@ const defaultCitationFormState: CitationFormState = {
   quotedText: '',
   apudAuthor: '',
   apudYear: '',
+}
+const defaultFigureFormState: FigureFormState = {
+  file: null,
+  caption: '',
+  sourceText: '',
+  widthPercent: 100,
 }
 
 const citationTypeOptions: Array<{ value: CitationType; label: string; helper: string }> = [
@@ -141,6 +158,7 @@ function getRouteNodeFromEditorNode(nodeId: EditorNodeId): string {
   if (nodeId === 'abstractPt') return 'summary'
   if (nodeId === 'abstractEn') return 'abstract'
   if (nodeId === 'references') return 'references'
+  if (nodeId === 'figures') return 'figures'
   return getChapterIdFromNode(nodeId) ?? ''
 }
 
@@ -152,12 +170,17 @@ function getEditorNodeFromRouteNode(
   if (routeNode === 'summary') return 'abstractPt'
   if (routeNode === 'abstract') return 'abstractEn'
   if (routeNode === 'references') return 'references'
+  if (routeNode === 'figures') return 'figures'
   if (availableChapterIds.includes(routeNode)) return `chapter:${routeNode}`
   return null
 }
 
 function buildCitationMarker(citationId: string) {
   return `[[@CITE:${citationId}]]`
+}
+
+function buildFigureMarker(figureId: string) {
+  return `[[@FIG:${figureId}]]`
 }
 
 function escapeRegExp(value: string) {
@@ -230,6 +253,15 @@ function buildCitationPreviewLabel(citation?: Citation) {
   return `[Citação: ${base}${page}${apud}]`
 }
 
+function buildFigurePreviewLabel(figure?: Figure) {
+  if (!figure) return 'Figura inválida ou removida'
+  return `Figura – ${figure.caption}`
+}
+
+function isResolvedFigurePreviewUrl(url?: string) {
+  return Boolean(url && (url.startsWith('blob:') || url.startsWith('data:')))
+}
+
 export function buildCitationAbntPreview(citation?: Citation) {
   if (!citation?.reference) return '(Citação não encontrada)'
 
@@ -256,8 +288,16 @@ function replaceCitationMarkers(content: string, citationsMap: Map<string, Citat
   return content.replace(CITE_MARKER_REGEX, (_, citationId: string) => buildCitationPreviewLabel(citationsMap.get(citationId)))
 }
 
+function replaceFigureMarkers(content: string, figuresMap: Map<string, Figure>) {
+  return content.replace(FIG_MARKER_REGEX, (_, figureId: string) => `[${buildFigurePreviewLabel(figuresMap.get(figureId))}]`)
+}
+
 export function extractCitationIds(content: string) {
   return Array.from(content.matchAll(CITE_MARKER_REGEX), (match) => match[1])
+}
+
+export function extractFigureIds(content: string) {
+  return Array.from(content.matchAll(FIG_MARKER_REGEX), (match) => match[1])
 }
 
 function getCitationChipLabel(citation?: Citation) {
@@ -270,6 +310,35 @@ function getCitationChipTooltip(citationId: string, citation?: Citation) {
   }
 
   return `${getCitationTypeLabel(citation.type)} • ${citation.reference?.abntFormatted ?? buildCitationPreviewLabel(citation)}`
+}
+
+function getFigureChipLabel(figure?: Figure, figureNumber?: number) {
+  if (!figure) return 'Figura indisponível'
+  return `Figura ${figureNumber ?? 1} – ${figure.caption}`
+}
+
+function getFigureChipTooltip(figureId: string, figure?: Figure) {
+  if (!figure) {
+    return `Marcador ${buildFigureMarker(figureId)} não encontrado na lista de figuras do projeto.`
+  }
+
+  return `${figure.caption}${figure.sourceText ? ` • ${figure.sourceText}` : ''}`
+}
+
+function buildFigureSourceLabel(figure?: Figure) {
+  if (!figure) return 'Figura indisponível'
+  return figure.sourceText?.trim() ? `Fonte: ${figure.sourceText.trim()}` : 'Fonte: não informada.'
+}
+
+function buildFigurePreviewWidthValue(figure?: Figure) {
+  return `${figure?.widthPercent ?? 100}%`
+}
+
+function createFigurePreviewFallback(doc: Document, message: string) {
+  const fallback = doc.createElement('div')
+  fallback.className = 'flex min-h-[180px] w-full items-center justify-center px-6 py-10 text-center text-sm italic text-muted-foreground'
+  fallback.textContent = message
+  return fallback
 }
 
 function createCitationChipNode(doc: Document, citationId: string, citation?: Citation) {
@@ -286,15 +355,78 @@ function createCitationChipNode(doc: Document, citationId: string, citation?: Ci
   return chip
 }
 
-function appendTextWithCitationChips(root: HTMLElement, content: string, citationsMap: Map<string, Citation>) {
-  let lastIndex = 0
+function createFigureChipNode(doc: Document, figureId: string, figure?: Figure, figureNumber?: number) {
+  const wrapper = doc.createElement('figure')
+  wrapper.dataset.figureId = figureId
+  wrapper.contentEditable = 'false'
+  wrapper.className = 'my-8 block w-full text-center'
+  wrapper.title = getFigureChipTooltip(figureId, figure)
+  wrapper.setAttribute('aria-label', getFigureChipTooltip(figureId, figure))
+  wrapper.setAttribute('tabindex', '0')
 
-  content.replace(CITE_MARKER_REGEX, (match, citationId: string, offset: number) => {
+  const frame = doc.createElement('div')
+  frame.className = 'mx-auto flex w-full flex-col items-center gap-3'
+  frame.style.width = buildFigurePreviewWidthValue(figure)
+  frame.style.maxWidth = '100%'
+
+  const media = doc.createElement('div')
+  media.className = figure
+    ? 'w-full'
+    : 'w-full'
+
+  if (figure?.imageUrl && isResolvedFigurePreviewUrl(figure.imageUrl)) {
+    const image = doc.createElement('img')
+    image.src = figure.imageUrl
+    image.alt = figure.caption
+    image.className = 'mx-auto block h-auto w-full max-w-full object-contain'
+    image.setAttribute('loading', 'lazy')
+    image.addEventListener('error', () => {
+      media.replaceChildren(createFigurePreviewFallback(doc, 'Prévia da imagem indisponível'))
+    }, { once: true })
+    media.append(image)
+  } else if (figure) {
+    media.append(createFigurePreviewFallback(doc, 'Prévia da imagem indisponível'))
+  } else {
+    media.append(createFigurePreviewFallback(doc, 'Figura indisponível'))
+  }
+
+  const caption = doc.createElement('figcaption')
+  caption.className = figure
+    ? 'text-[15px] font-medium leading-7 text-foreground'
+    : 'text-[15px] font-medium leading-7 text-amber-900'
+  caption.textContent = getFigureChipLabel(figure, figureNumber)
+
+  const source = doc.createElement('p')
+  source.className = 'text-[13px] leading-6 text-muted-foreground'
+  source.textContent = buildFigureSourceLabel(figure)
+
+  frame.append(media, caption, source)
+  wrapper.append(frame)
+  return wrapper
+}
+
+const INLINE_MARKER_REGEX = /\[\[@(CITE|FIG):([^\]]+)\]\]/g
+function appendContentWithInlineMarkers(
+  root: HTMLElement,
+  content: string,
+  citationsMap: Map<string, Citation>,
+  figuresMap: Map<string, Figure>,
+) {
+  let lastIndex = 0
+  let figureNumber = 0
+
+  content.replace(INLINE_MARKER_REGEX, (match, markerType: string, markerId: string, offset: number) => {
     if (offset > lastIndex) {
       root.append(document.createTextNode(content.slice(lastIndex, offset)))
     }
 
-    root.append(createCitationChipNode(root.ownerDocument, citationId, citationsMap.get(citationId)))
+    if (markerType === 'CITE') {
+      root.append(createCitationChipNode(root.ownerDocument, markerId, citationsMap.get(markerId)))
+    } else {
+      figureNumber += 1
+      root.append(createFigureChipNode(root.ownerDocument, markerId, figuresMap.get(markerId), figureNumber))
+    }
+
     lastIndex = offset + match.length
     return match
   })
@@ -304,9 +436,9 @@ function appendTextWithCitationChips(root: HTMLElement, content: string, citatio
   }
 }
 
-function renderContentEditableValue(root: HTMLElement, content: string, citationsMap: Map<string, Citation>) {
+function renderContentEditableValue(root: HTMLElement, content: string, citationsMap: Map<string, Citation>, figuresMap: Map<string, Figure>) {
   root.replaceChildren()
-  appendTextWithCitationChips(root, content, citationsMap)
+  appendContentWithInlineMarkers(root, content, citationsMap, figuresMap)
 }
 
 function serializeEditorNode(node: Node): string {
@@ -320,6 +452,10 @@ function serializeEditorNode(node: Node): string {
 
   if (node.dataset.citationId) {
     return buildCitationMarker(node.dataset.citationId)
+  }
+
+  if (node.dataset.figureId) {
+    return buildFigureMarker(node.dataset.figureId)
   }
 
   if (node.tagName === 'BR') {
@@ -336,6 +472,148 @@ function serializeEditorNode(node: Node): string {
 
 function serializeEditorContent(root: HTMLElement) {
   return Array.from(root.childNodes).map(serializeEditorNode).join('').replace(/\n$/, '')
+}
+
+function getSerializedNodeLength(node: Node): number {
+  return serializeEditorNode(node).length
+}
+
+function getSerializedOffset(root: HTMLElement, container: Node, offset: number): number {
+  if (container === root) {
+    return Array.from(root.childNodes).slice(0, offset).reduce((total, node) => total + getSerializedNodeLength(node), 0)
+  }
+
+  let serializedOffset = 0
+  let found = false
+
+  const visit = (node: Node): boolean => {
+    if (node === container) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        serializedOffset += offset
+      } else if (node instanceof HTMLElement) {
+        if (node.dataset.citationId || node.dataset.figureId) {
+          serializedOffset += offset > 0 ? getSerializedNodeLength(node) : 0
+        } else if (node.tagName === 'BR') {
+          serializedOffset += Math.min(offset, 1)
+        } else {
+          serializedOffset += Array.from(node.childNodes)
+            .slice(0, offset)
+            .reduce((total, child) => total + getSerializedNodeLength(child), 0)
+        }
+      }
+
+      found = true
+      return true
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      serializedOffset += node.textContent?.length ?? 0
+      return false
+    }
+
+    if (!(node instanceof HTMLElement)) {
+      return false
+    }
+
+    if (node.dataset.citationId || node.dataset.figureId) {
+      serializedOffset += getSerializedNodeLength(node)
+      return false
+    }
+
+    if (node.tagName === 'BR') {
+      serializedOffset += 1
+      return false
+    }
+
+    for (const child of Array.from(node.childNodes)) {
+      if (visit(child)) {
+        if (node.tagName === 'DIV' || node.tagName === 'P') {
+          serializedOffset += 1
+        }
+        return true
+      }
+    }
+
+    if (node.tagName === 'DIV' || node.tagName === 'P') {
+      serializedOffset += 1
+    }
+
+    return false
+  }
+
+  for (const child of Array.from(root.childNodes)) {
+    if (visit(child)) {
+      break
+    }
+  }
+
+  if (found) {
+    return serializedOffset
+  }
+
+  return serializeEditorContent(root).length
+}
+
+function placeCaretAtSerializedOffset(root: HTMLElement, targetOffset: number) {
+  root.focus()
+  const selection = window.getSelection()
+  if (!selection) return
+
+  const range = document.createRange()
+  let remainingOffset = Math.max(0, targetOffset)
+
+  const placeInsideTextNode = (node: Text, offset: number) => {
+    range.setStart(node, offset)
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+
+  for (const node of Array.from(root.childNodes)) {
+    const nodeLength = getSerializedNodeLength(node)
+
+    if (remainingOffset > nodeLength) {
+      remainingOffset -= nodeLength
+      continue
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      placeInsideTextNode(node as Text, Math.min(remainingOffset, node.textContent?.length ?? 0))
+      return
+    }
+
+    if (node instanceof HTMLElement && (node.dataset.citationId || node.dataset.figureId)) {
+      if (remainingOffset === 0) {
+        range.setStartBefore(node)
+      } else {
+        range.setStartAfter(node)
+      }
+      range.collapse(true)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      return
+    }
+
+    range.setStartAfter(node)
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    return
+  }
+
+  placeCaretAtEnd(root)
+}
+
+function buildFigureInsertionContent(content: string, startOffset: number, endOffset: number, marker: string) {
+  const normalizedStart = Math.max(0, Math.min(startOffset, content.length))
+  const normalizedEnd = Math.max(normalizedStart, Math.min(endOffset, content.length))
+  const before = content.slice(0, normalizedStart)
+  const after = content.slice(normalizedEnd)
+  const prefix = before.length === 0 ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n'
+  const suffix = after.length === 0 ? '' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n'
+  const nextValue = `${before}${prefix}${marker}${suffix}${after}`
+  const caretOffset = before.length + prefix.length + marker.length + suffix.length
+  return { nextValue, caretOffset }
 }
 
 function moveCaretAfterNode(node: Node) {
@@ -363,6 +641,11 @@ function placeCaretAtEnd(root: HTMLElement) {
 
 function removeCitationMarker(content: string, citationId: string) {
   const markerRegex = new RegExp(escapeRegExp(buildCitationMarker(citationId)), 'g')
+  return content.replace(markerRegex, '')
+}
+
+function removeFigureMarker(content: string, figureId: string) {
+  const markerRegex = new RegExp(escapeRegExp(buildFigureMarker(figureId)), 'g')
   return content.replace(markerRegex, '')
 }
 
@@ -423,6 +706,7 @@ function getDocumentKindLabel(nodeId: EditorNodeId, isChapterView: boolean) {
   if (nodeId === 'abstractPt') return 'Síntese pré-textual'
   if (nodeId === 'abstractEn') return 'Versão internacional'
   if (nodeId === 'references') return 'Apoio bibliográfico'
+  if (nodeId === 'figures') return 'Pós-textual visual'
   if (isChapterView) return 'Capítulo textual'
   return 'Documento'
 }
@@ -506,6 +790,7 @@ function buildProjectTextPayload(
     advisorName?: string
     deadline: Date | string
     norm: 'ABNT' | 'APA' | 'Vancouver'
+    templateProfile: 'ABNT_GENERIC' | 'FEMAF'
     theme?: string
     researchProblem?: string
     generalObjective?: string
@@ -528,6 +813,7 @@ function buildProjectTextPayload(
     advisorName: project.advisorName ?? '',
     deadline: project.deadline instanceof Date ? project.deadline.toISOString().slice(0, 10) : project.deadline,
     norm: project.norm,
+    templateProfile: project.templateProfile,
     theme: project.theme ?? '',
     researchProblem: project.researchProblem ?? '',
     generalObjective: project.generalObjective ?? '',
@@ -549,6 +835,7 @@ async function invalidateEditorQueries(queryClient: ReturnType<typeof useQueryCl
     queryClient.invalidateQueries({ queryKey: ['chapters', projectId] }),
     queryClient.invalidateQueries({ queryKey: ['references'] }),
     queryClient.invalidateQueries({ queryKey: ['citations', 'project', projectId] }),
+    queryClient.invalidateQueries({ queryKey: ['figures', 'project', projectId] }),
     queryClient.invalidateQueries({ queryKey: ['timeline'] }),
     queryClient.invalidateQueries({ queryKey: ['ai-suggestions'] }),
     queryClient.invalidateQueries({ queryKey: ['export-status'] }),
@@ -556,6 +843,7 @@ async function invalidateEditorQueries(queryClient: ReturnType<typeof useQueryCl
       ? Promise.all([
           queryClient.invalidateQueries({ queryKey: ['chapter', chapterId] }),
           queryClient.invalidateQueries({ queryKey: ['citations', 'chapter', chapterId] }),
+          queryClient.invalidateQueries({ queryKey: ['figures', 'chapter', chapterId] }),
         ])
       : Promise.resolve(),
   ])
@@ -568,6 +856,7 @@ export function EditorPage() {
   const chaptersListQuery = useQuery(chaptersQuery(projectId))
   const referencesListQuery = useQuery(referencesQuery(projectId))
   const projectCitationsListQuery = useQuery(projectCitationsQuery(projectId))
+  const projectFiguresListQuery = useQuery(projectFiguresQuery(projectId))
   const { data: projects = [], isLoading: projectsLoading } = useQuery(projectsQuery)
   const queryClient = useQueryClient()
   const [selectedNodeId, setSelectedNodeId] = useState<EditorNodeId | null>(null)
@@ -584,11 +873,17 @@ export function EditorPage() {
   const [citationForm, setCitationForm] = useState<CitationFormState>(defaultCitationFormState)
   const [citationFeedback, setCitationFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
   const [citationSaving, setCitationSaving] = useState(false)
+  const [figureDialogOpen, setFigureDialogOpen] = useState(false)
+  const [figureForm, setFigureForm] = useState<FigureFormState>(defaultFigureFormState)
+  const [figureFeedback, setFigureFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
+  const [figureSaving, setFigureSaving] = useState(false)
+  const [figurePreviewUrls, setFigurePreviewUrls] = useState<Record<string, string>>({})
   const [quickReferenceDialogOpen, setQuickReferenceDialogOpen] = useState(false)
   const [quickReferenceForm, setQuickReferenceForm] = useState<QuickReferenceFormState>(quickReferenceDefaultFormState)
   const [quickReferenceSaving, setQuickReferenceSaving] = useState(false)
   const [quickReferenceFeedback, setQuickReferenceFeedback] = useState<string | null>(null)
   const [deletingCitationId, setDeletingCitationId] = useState<string | null>(null)
+  const [deletingFigureId, setDeletingFigureId] = useState<string | null>(null)
   const lastSavedContentRef = useRef('')
   const latestContentRef = useRef('')
   const hydratedChapterIdRef = useRef<string | null>(null)
@@ -606,6 +901,7 @@ export function EditorPage() {
   const selectedChapterId = selectedNodeId ? getChapterIdFromNode(selectedNodeId) : null
   const selectedChapterQuery = useQuery(chapterQuery(selectedChapterId))
   const chapterCitationsListQuery = useQuery(chapterCitationsQuery(selectedChapterId))
+  const chapterFiguresListQuery = useQuery(chapterFiguresQuery(selectedChapterId, projectId))
   const previousProjectIdRef = useRef<string | null>(null)
 
   const selectedChapter = useMemo(
@@ -614,6 +910,8 @@ export function EditorPage() {
   )
   const chapterCitations = chapterCitationsListQuery.data ?? []
   const projectCitations = projectCitationsListQuery.data ?? []
+  const chapterFigures = chapterFiguresListQuery.data ?? []
+  const projectFigures = projectFiguresListQuery.data ?? []
   const referencesMap = useMemo(
     () => new Map((referencesListQuery.data ?? []).map((reference) => [reference.id, reference])),
     [referencesListQuery.data],
@@ -630,17 +928,40 @@ export function EditorPage() {
     ),
     [projectCitations, referencesMap],
   )
+  const figuresMap = useMemo(
+    () => new Map(projectFigures.map((figure) => [
+      figure.id,
+      {
+        ...figure,
+        imageUrl: figurePreviewUrls[figure.id]
+          ?? (isResolvedFigurePreviewUrl(figure.imageUrl) ? figure.imageUrl : undefined),
+      },
+    ])),
+    [figurePreviewUrls, projectFigures],
+  )
   const contentCitationIds = useMemo(
     () => extractCitationIds(content),
+    [content],
+  )
+  const contentFigureIds = useMemo(
+    () => extractFigureIds(content),
     [content],
   )
   const invalidCitationCount = useMemo(
     () => contentCitationIds.filter((citationId) => !citationsMap.has(citationId)).length,
     [citationsMap, contentCitationIds],
   )
+  const invalidFigureCount = useMemo(
+    () => contentFigureIds.filter((figureId) => !figuresMap.has(figureId)).length,
+    [contentFigureIds, figuresMap],
+  )
   const chapterCitationIdsInText = useMemo(
     () => new Set(contentCitationIds),
     [contentCitationIds],
+  )
+  const chapterFigureIdsInText = useMemo(
+    () => new Set(contentFigureIds),
+    [contentFigureIds],
   )
   const projectChapterContents = useMemo(
     () => chapters.map((chapter) => (
@@ -652,6 +973,10 @@ export function EditorPage() {
   )
   const projectCitationIdsInText = useMemo(
     () => new Set(projectChapterContents.flatMap((chapter) => extractCitationIds(chapter.content ?? ''))),
+    [projectChapterContents],
+  )
+  const projectFigureIdsInText = useMemo(
+    () => new Set(projectChapterContents.flatMap((chapter) => extractFigureIds(chapter.content ?? ''))),
     [projectChapterContents],
   )
   const chapterCitationsInText = useMemo(
@@ -666,6 +991,18 @@ export function EditorPage() {
     () => projectCitations.filter((citation) => projectCitationIdsInText.has(citation.id)),
     [projectCitationIdsInText, projectCitations],
   )
+  const chapterFiguresInText = useMemo(
+    () => chapterFigures.filter((figure) => chapterFigureIdsInText.has(figure.id)),
+    [chapterFigureIdsInText, chapterFigures],
+  )
+  const chapterUnusedFigures = useMemo(
+    () => chapterFigures.filter((figure) => !chapterFigureIdsInText.has(figure.id)),
+    [chapterFigureIdsInText, chapterFigures],
+  )
+  const projectFiguresInText = useMemo(
+    () => projectFigures.filter((figure) => projectFigureIdsInText.has(figure.id)),
+    [projectFigureIdsInText, projectFigures],
+  )
   const citedReferenceIds = useMemo(
     () => new Set(projectCitationsInText.map((citation) => citation.referenceId)),
     [projectCitationsInText],
@@ -674,6 +1011,65 @@ export function EditorPage() {
     () => (referencesListQuery.data ?? []).filter((reference) => citedReferenceIds.has(reference.id)),
     [citedReferenceIds, referencesListQuery.data],
   )
+  const figuresInReadingOrder = useMemo(
+    () => {
+      const ordered: Figure[] = []
+      projectChapterContents.forEach((chapter) => {
+        extractFigureIds(chapter.content ?? '').forEach((figureId) => {
+          const figure = figuresMap.get(figureId)
+          if (figure && !ordered.some((item) => item.id === figure.id)) {
+            ordered.push(figure)
+          }
+        })
+      })
+      return ordered
+    },
+    [figuresMap, projectChapterContents],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    const previewableFigures = projectFigures.filter((figure) => !isResolvedFigurePreviewUrl(figure.imageUrl))
+    if (!previewableFigures.length) return
+
+    previewableFigures.forEach((figure) => {
+      if (Object.prototype.hasOwnProperty.call(figurePreviewUrls, figure.id)) return
+
+      void getFigureImage(projectId, figure.id)
+        .then((imageUrl) => {
+          if (cancelled) return
+          setFigurePreviewUrls((current) => (
+            current[figure.id] === imageUrl
+              ? current
+              : { ...current, [figure.id]: imageUrl }
+          ))
+        })
+        .catch(() => {
+          if (cancelled) return
+          setFigurePreviewUrls((current) => (
+            current[figure.id] === ''
+              ? current
+              : { ...current, [figure.id]: '' }
+          ))
+        })
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [figurePreviewUrls, projectFigures, projectId])
+
+  useEffect(() => {
+    const activeFigureIds = new Set(projectFigures.map((figure) => figure.id))
+    setFigurePreviewUrls((current) => {
+      const nextEntries = Object.entries(current).filter(([figureId]) => activeFigureIds.has(figureId))
+      if (nextEntries.length === Object.keys(current).length) {
+        return current
+      }
+
+      return Object.fromEntries(nextEntries)
+    })
+  }, [projectFigures])
 
   useEffect(() => {
     if (projectId) {
@@ -770,6 +1166,8 @@ export function EditorPage() {
       setSaveState('idle')
       setCitationFeedback(null)
       setCitationDialogOpen(false)
+      setFigureFeedback(null)
+      setFigureDialogOpen(false)
       setQuickReferenceDialogOpen(false)
     }
   }, [selectedChapter])
@@ -890,7 +1288,7 @@ export function EditorPage() {
   const isChapterView = isChapterNode(activeNodeId)
   const abstractPtWords = countWords(abstractPtDraft)
   const abstractEnWords = countWords(abstractEnDraft)
-  const displayContent = replaceCitationMarkers(content, citationsMap)
+  const displayContent = replaceFigureMarkers(replaceCitationMarkers(content, citationsMap), figuresMap)
   const chapterWordCount = countWords(displayContent)
   const selectedWordCount = isChapterView ? chapterWordCount : activeNodeId === 'abstractPt' ? abstractPtWords : activeNodeId === 'abstractEn' ? abstractEnWords : 0
   const targetWords = getChapterTargetWords(selectedChapter)
@@ -907,17 +1305,18 @@ export function EditorPage() {
   const abstractPtStatus = normalizeTextStatus(abstractPtWords, 150)
   const abstractEnStatus = normalizeTextStatus(abstractEnWords, 100)
   const referencesStatus: DocumentStatus = citedReferences.length > 0 ? 'completed' : 'pending'
+  const figuresStatus: DocumentStatus = figuresInReadingOrder.length > 0 ? 'completed' : 'pending'
   const textualStatuses = textualChapters.map((chapter) => normalizeChapterStatus(chapter))
 
   const groupCounters = {
     pre: [abstractPtStatus, abstractEnStatus],
     text: textualStatuses,
-    post: [referencesStatus],
+    post: [referencesStatus, figuresStatus],
   }
 
   const selectedGroup = activeNodeId === 'abstractPt' || activeNodeId === 'abstractEn'
     ? 'Pré-textuais'
-    : activeNodeId === 'references'
+    : activeNodeId === 'references' || activeNodeId === 'figures'
       ? 'Pós-textuais'
       : 'Textuais'
   const selectedLabel = activeNodeId === 'abstractPt'
@@ -926,6 +1325,8 @@ export function EditorPage() {
       ? 'Abstract'
       : activeNodeId === 'references'
         ? 'Referências'
+        : activeNodeId === 'figures'
+          ? 'Lista de figuras'
         : selectedChapter?.title ?? 'Capítulo'
   const selectedStatus = activeNodeId === 'abstractPt'
       ? abstractPtStatus
@@ -933,6 +1334,8 @@ export function EditorPage() {
         ? abstractEnStatus
         : activeNodeId === 'references'
           ? referencesStatus
+          : activeNodeId === 'figures'
+            ? figuresStatus
           : normalizeChapterStatus(selectedChapter ?? textualChapters[0])
   const selectedSummaryLabel = getDocumentSummaryLabel(activeNodeId, selectedStatus, isChapterView)
   const editorBodyWidth = getEditorBodyWidth(isChapterView, aiOpen)
@@ -1056,6 +1459,10 @@ export function EditorPage() {
     setCitationForm((current) => ({ ...current, [field]: value }))
   }
 
+  function updateFigureForm<K extends keyof FigureFormState>(field: K, value: FigureFormState[K]) {
+    setFigureForm((current) => ({ ...current, [field]: value }))
+  }
+
   function updateQuickReferenceForm<K extends keyof QuickReferenceFormState>(field: K, value: QuickReferenceFormState[K]) {
     setQuickReferenceForm((current) => ({ ...current, [field]: value }))
   }
@@ -1076,7 +1483,7 @@ export function EditorPage() {
 
   function focusEditorAtPosition(_nextPosition: number) {
     window.requestAnimationFrame(() => {
-      chapterEditorRef.current?.focusAtEnd()
+      chapterEditorRef.current?.focusAtOffset(_nextPosition)
     })
   }
 
@@ -1128,6 +1535,73 @@ export function EditorPage() {
       })
     } finally {
       setCitationSaving(false)
+    }
+  }
+
+  async function handleCreateFigure() {
+    if (!selectedChapter) return
+
+    if (!figureForm.file) {
+      setFigureFeedback({ tone: 'error', message: 'Selecione uma imagem para inserir a figura.' })
+      return
+    }
+
+    if (!['image/png', 'image/jpeg', 'image/jpg'].includes(figureForm.file.type)) {
+      setFigureFeedback({ tone: 'error', message: 'Envie uma imagem PNG ou JPG/JPEG.' })
+      return
+    }
+
+    if (figureForm.file.size > 10 * 1024 * 1024) {
+      setFigureFeedback({ tone: 'error', message: 'A imagem deve ter no máximo 10 MB.' })
+      return
+    }
+
+    if (!figureForm.caption.trim()) {
+      setFigureFeedback({ tone: 'error', message: 'Informe a legenda da figura para continuar.' })
+      return
+    }
+
+    setFigureSaving(true)
+    setFigureFeedback(null)
+
+    try {
+      const createdFigure = await createFigure(projectId, {
+        chapterId: selectedChapter.id,
+        caption: figureForm.caption,
+        sourceText: figureForm.sourceText,
+        widthPercent: figureForm.widthPercent,
+        file: figureForm.file,
+      })
+      const resolvedImageUrl = isResolvedFigurePreviewUrl(createdFigure.imageUrl)
+        ? createdFigure.imageUrl
+        : await getFigureImage(projectId, createdFigure.id).catch(() => undefined)
+      const createdFigureWithPreview = resolvedImageUrl
+        ? { ...createdFigure, imageUrl: resolvedImageUrl }
+        : createdFigure
+
+      const marker = buildFigureMarker(createdFigure.id)
+      if (resolvedImageUrl) {
+        setFigurePreviewUrls((current) => ({ ...current, [createdFigure.id]: resolvedImageUrl }))
+      }
+
+      const insertionResult = chapterEditorRef.current?.insertFigure(createdFigure.id, createdFigureWithPreview)
+      const nextContent = insertionResult?.value ?? `${latestContentRef.current}${marker}`
+      const nextCaretOffset = insertionResult?.caretOffset ?? nextContent.length
+
+      setContent(nextContent)
+      latestContentRef.current = nextContent
+      setFigureDialogOpen(false)
+      setFigureForm(defaultFigureFormState)
+      setFigureFeedback(null)
+      await invalidateEditorQueries(queryClient, projectId, selectedChapter.id)
+      focusEditorAtPosition(nextCaretOffset)
+    } catch (error) {
+      setFigureFeedback({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Não foi possível inserir a figura agora.',
+      })
+    } finally {
+      setFigureSaving(false)
     }
   }
 
@@ -1203,6 +1677,41 @@ export function EditorPage() {
     }
   }
 
+  async function handleRemoveFigure(figure: Figure) {
+    if (!selectedChapter) return
+
+    setDeletingFigureId(figure.id)
+    setFigureFeedback(null)
+
+    try {
+      await deleteFigure(figure.id)
+      setFigurePreviewUrls((current) => {
+        if (!(figure.id in current)) return current
+        const next = { ...current }
+        delete next[figure.id]
+        return next
+      })
+
+      const nextContent = removeFigureMarker(latestContentRef.current, figure.id)
+      if (nextContent !== latestContentRef.current) {
+        setContent(nextContent)
+        latestContentRef.current = nextContent
+        lastSavedContentRef.current = nextContent
+        await updateChapterContent(selectedChapter.id, nextContent)
+      }
+
+      await invalidateEditorQueries(queryClient, projectId, selectedChapter.id)
+      setFigureFeedback({ tone: 'success', message: 'Figura removida do capítulo e da lista.' })
+    } catch (error) {
+      setFigureFeedback({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Não foi possível remover a figura selecionada.',
+      })
+    } finally {
+      setDeletingFigureId(null)
+    }
+  }
+
   return (
     <div className="flex h-[calc(100vh-72px)] min-h-[720px] bg-[radial-gradient(circle_at_top,rgba(24,53,104,0.05),transparent_36%),linear-gradient(180deg,rgba(255,255,255,0.42),rgba(255,255,255,0))]">
       <aside className="hidden h-full w-[292px] border-r border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(248,250,252,0.96))] shadow-[8px_0_32px_rgba(15,23,42,0.04)] backdrop-blur lg:flex lg:flex-col">
@@ -1258,6 +1767,13 @@ export function EditorPage() {
                 active={activeNodeId === 'references'}
                 status={referencesStatus}
                 onClick={() => void handleSelectNode('references')}
+              />
+              <DocumentNavItem
+                title="Lista de figuras"
+                helper={figuresInReadingOrder.length > 0 ? `${figuresInReadingOrder.length} figura(s) usada(s)` : 'Nenhuma figura usada ainda'}
+                active={activeNodeId === 'figures'}
+                status={figuresStatus}
+                onClick={() => void handleSelectNode('figures')}
               />
             </DocumentSection>
           </div>
@@ -1403,6 +1919,45 @@ export function EditorPage() {
                 </SectionCard>
               ) : null}
 
+              {activeNodeId === 'figures' ? (
+                <SectionCard
+                  title="Lista de figuras"
+                  description="Mostra somente figuras efetivamente usadas nos capítulos, na ordem em que aparecem no texto."
+                >
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <ReferenceSummaryCard
+                      title="Figuras usadas"
+                      value={`${figuresInReadingOrder.length} figura(s)`}
+                      helper={figuresInReadingOrder.length > 0 ? 'A lista acompanha os marcadores inseridos nos capítulos.' : 'As figuras aparecem aqui automaticamente quando você insere marcadores nos capítulos.'}
+                    />
+                    <ReferenceSummaryCard
+                      title="Status do pós-textual"
+                      value={getStatusLabel(figuresStatus)}
+                      helper="A lista fica concluída quando existe ao menos uma figura efetivamente usada no texto."
+                    />
+                  </div>
+                  {figuresInReadingOrder.length === 0 ? (
+                    <div className="mt-5 rounded-[24px] border border-dashed border-border/80 bg-muted/25 px-5 py-5">
+                      <p className="text-sm font-medium text-foreground">Nenhuma figura usada no texto ainda.</p>
+                      <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                        As figuras aparecem aqui automaticamente quando você insere marcadores nos capítulos.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="mt-5 space-y-3">
+                      {figuresInReadingOrder.map((figure, index) => (
+                        <div key={figure.id} className="rounded-[24px] border border-border/70 bg-white/84 px-4 py-4">
+                          <p className="text-sm font-medium text-foreground">{`Figura ${index + 1} – ${figure.caption}`}</p>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                            {figure.sourceText?.trim() ? figure.sourceText : 'Fonte não informada.'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SectionCard>
+              ) : null}
+
               {isChapterView && selectedChapter ? (
                 <div className="space-y-7">
                   <SectionCard
@@ -1452,9 +2007,12 @@ export function EditorPage() {
                               <AcademicToolbarButton
                                 icon={FileImage}
                                 label="Inserir figura"
-                                tooltip="Em breve: figuras ABNT com marcador próprio."
-                                disabled
-                                badge="Em breve"
+                                tooltip="Faz upload da figura e insere o marcador no ponto atual do cursor."
+                                onClick={() => {
+                                  setFigureFeedback(null)
+                                  setFigureDialogOpen(true)
+                                }}
+                                disabled={figureSaving}
                               />
                               <AcademicToolbarButton
                                 icon={FileSpreadsheet}
@@ -1476,11 +2034,23 @@ export function EditorPage() {
                                 <span className="text-xs font-medium text-muted-foreground">
                                   {chapterCitationsListQuery.isLoading ? '...' : `${contentCitationIds.length} citações`}
                                 </span>
+                                <span className="h-4 w-px bg-border/70" />
+                                <span className="text-xs font-medium text-muted-foreground">
+                                  {chapterFiguresListQuery.isLoading ? '...' : `${contentFigureIds.length} figuras`}
+                                </span>
                                 {invalidCitationCount > 0 ? (
                                   <>
                                     <span className="h-4 w-px bg-border/70" />
                                     <span className="text-xs font-medium text-amber-700">
                                       {invalidCitationCount} inválida(s)
+                                    </span>
+                                  </>
+                                ) : null}
+                                {invalidFigureCount > 0 ? (
+                                  <>
+                                    <span className="h-4 w-px bg-border/70" />
+                                    <span className="text-xs font-medium text-amber-700">
+                                      {invalidFigureCount} figura(s) inválida(s)
                                     </span>
                                   </>
                                 ) : null}
@@ -1502,6 +2072,7 @@ export function EditorPage() {
                               ref={chapterEditorRef}
                               value={content}
                               citationsMap={citationsMap}
+                              figuresMap={figuresMap}
                               onChange={(nextValue) => {
                                 setContent(nextValue)
                                 latestContentRef.current = nextValue
@@ -1512,6 +2083,11 @@ export function EditorPage() {
                           {citationFeedback ? (
                             <p className={citationFeedback.tone === 'success' ? 'mt-4 text-sm text-primary' : 'mt-4 text-sm text-destructive'}>
                               {citationFeedback.message}
+                            </p>
+                          ) : null}
+                          {figureFeedback ? (
+                            <p className={figureFeedback.tone === 'success' ? 'mt-4 text-sm text-primary' : 'mt-4 text-sm text-destructive'}>
+                              {figureFeedback.message}
                             </p>
                           ) : null}
                         </div>
@@ -1615,6 +2191,102 @@ export function EditorPage() {
                                   disabled={deletingCitationId === citation.id}
                                 >
                                   {deletingCitationId === citation.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                  Remover
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </SectionCard>
+
+                      <SectionCard
+                        title="Figuras do capítulo"
+                        description="A contagem considera apenas marcadores [[@FIG:id]] presentes no texto, sem apagar figuras cadastradas para reutilização futura."
+                        className="rounded-[30px] border-border/55 bg-white/82 shadow-sm"
+                      >
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <ReferenceSummaryCard
+                            title="Figuras no capítulo"
+                            value={chapterFiguresListQuery.isLoading ? '...' : `${chapterFiguresInText.length}`}
+                            helper="Total de figuras usadas no texto atual deste capítulo."
+                          />
+                          <ReferenceSummaryCard
+                            title="Figuras no projeto"
+                            value={projectFiguresListQuery.isLoading ? '...' : `${projectFiguresInText.length}`}
+                            helper="Total de figuras com marcador presente nos capítulos do projeto."
+                          />
+                        </div>
+
+                        {chapterFiguresListQuery.isError ? (
+                          <p className="mt-5 rounded-[20px] border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                            Não foi possível carregar as figuras deste capítulo.
+                          </p>
+                        ) : null}
+
+                        {!chapterFiguresListQuery.isLoading && chapterFiguresInText.length === 0 ? (
+                          <div className="mt-5 rounded-[24px] border border-dashed border-border/80 bg-muted/25 px-5 py-5">
+                            <p className="text-sm font-medium text-foreground">Nenhuma figura usada no texto ainda</p>
+                            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                              Use a toolbar acadêmica para fazer upload e inserir a primeira figura deste capítulo.
+                            </p>
+                          </div>
+                        ) : null}
+
+                        {chapterFiguresInText.length > 0 ? (
+                          <div className="mt-5 space-y-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/70">Figuras usadas no texto</p>
+                            {chapterFiguresInText.map((figure) => (
+                              <div key={figure.id} className="flex flex-wrap items-start justify-between gap-4 rounded-[24px] border border-border/70 bg-white/84 px-4 py-4">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <StatusBadge label="Figura" tone="info" />
+                                    <StatusBadge label={`${figure.widthPercent}%`} tone="neutral" />
+                                    <StatusBadge label="No texto" tone="success" />
+                                  </div>
+                                  <p className="mt-3 text-sm font-medium text-foreground">{buildFigurePreviewLabel(figure)}</p>
+                                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                                    {figure.sourceText?.trim() ? figure.sourceText : 'Fonte não informada.'}
+                                  </p>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void handleRemoveFigure(figure)}
+                                  disabled={deletingFigureId === figure.id}
+                                >
+                                  {deletingFigureId === figure.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                  Remover
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {chapterUnusedFigures.length > 0 ? (
+                          <div className="mt-5 space-y-3">
+                            <div className="rounded-[20px] border border-amber-200/70 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">
+                              {chapterUnusedFigures.length} figura(s) cadastrada(s) continuam no sistema, mas não aparecem no texto atual.
+                            </div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Figuras cadastradas, mas não usadas</p>
+                            {chapterUnusedFigures.map((figure) => (
+                              <div key={figure.id} className="flex flex-wrap items-start justify-between gap-4 rounded-[24px] border border-border/70 bg-muted/20 px-4 py-4">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <StatusBadge label="Figura" tone="info" />
+                                    <StatusBadge label="Sem marcador" tone="warning" />
+                                  </div>
+                                  <p className="mt-3 text-sm font-medium text-foreground">{buildFigurePreviewLabel(figure)}</p>
+                                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                                    {figure.sourceText?.trim() ? figure.sourceText : 'Fonte não informada.'}
+                                  </p>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void handleRemoveFigure(figure)}
+                                  disabled={deletingFigureId === figure.id}
+                                >
+                                  {deletingFigureId === figure.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                                   Remover
                                 </Button>
                               </div>
@@ -1731,6 +2403,108 @@ export function EditorPage() {
             </div>
           ) : null}
         </div>
+
+        <Dialog open={figureDialogOpen} onOpenChange={setFigureDialogOpen}>
+          <DialogContent className="max-w-xl rounded-[28px] border-border/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(249,250,252,0.98))] p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+            <div className="border-b border-border/60 px-6 py-5 md:px-7">
+              <DialogHeader className="text-left">
+                <DialogTitle className="text-[1.45rem] tracking-[-0.02em] text-foreground">Inserir figura</DialogTitle>
+                <DialogDescription className="mt-1 max-w-xl text-sm leading-6 text-muted-foreground">
+                  Envie a imagem, defina a legenda e insira a figura acadêmica no ponto atual do capítulo.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+
+            <div className="space-y-5 px-6 py-6 md:px-7">
+              <div className="space-y-5">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">Imagem</p>
+                  <Input
+                    type="file"
+                    accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+                    onChange={(event) => updateFigureForm('file', event.target.files?.[0] ?? null)}
+                    className="rounded-2xl bg-white/84"
+                    aria-label="Upload da imagem da figura"
+                  />
+                  <p className="text-sm text-muted-foreground">Aceita PNG e JPG/JPEG com até 10 MB.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">Legenda <span className="text-destructive">*</span></p>
+                  <Input
+                    value={figureForm.caption}
+                    onChange={(event) => updateFigureForm('caption', event.target.value)}
+                    placeholder="Ex.: Arquitetura geral do sistema"
+                    className="h-11 rounded-2xl bg-white/84"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">Fonte <span className="text-muted-foreground">(opcional)</span></p>
+                  <Input
+                    value={figureForm.sourceText}
+                    onChange={(event) => updateFigureForm('sourceText', event.target.value)}
+                    placeholder="Ex.: Elaboração própria."
+                    className="h-11 rounded-2xl bg-white/84"
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-foreground">Largura</p>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {[50, 75, 100].map((width) => (
+                      <button
+                        key={width}
+                        type="button"
+                        onClick={() => updateFigureForm('widthPercent', width as Figure['widthPercent'])}
+                        className={`rounded-[22px] border px-4 py-3 text-left transition-colors ${
+                          figureForm.widthPercent === width
+                            ? 'border-primary/50 bg-primary/6 shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
+                            : 'border-border/70 bg-white/84 hover:border-border'
+                        }`}
+                      >
+                        <p className="text-sm font-medium text-foreground">{width}%</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-[22px] border border-border/70 bg-[linear-gradient(180deg,rgba(250,251,252,0.95),rgba(255,255,255,0.98))] px-4 py-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/70">Prévia do marcador</p>
+                  <p className="mt-2 text-base font-medium tracking-[-0.01em] text-foreground">
+                    {getFigureChipLabel(figureForm.caption.trim() ? {
+                      id: 'preview-figure',
+                      projectId,
+                      chapterId: selectedChapterId ?? '',
+                      caption: figureForm.caption.trim(),
+                      sourceText: figureForm.sourceText.trim() || undefined,
+                      originalFilename: figureForm.file?.name ?? 'imagem.png',
+                      mimeType: figureForm.file?.type ?? 'image/png',
+                      fileSizeBytes: figureForm.file?.size ?? 0,
+                      widthPercent: figureForm.widthPercent,
+                    } : undefined)}
+                  </p>
+                </div>
+
+                {figureFeedback?.tone === 'error' ? (
+                  <p className="rounded-[18px] border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                    {figureFeedback.message}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            <DialogFooter className="border-t border-border/60 px-6 py-5 md:px-7">
+              <Button variant="outline" onClick={() => setFigureDialogOpen(false)} disabled={figureSaving}>
+                Cancelar
+              </Button>
+              <Button onClick={() => void handleCreateFigure()} disabled={figureSaving}>
+                {figureSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileImage className="h-4 w-4" />}
+                {figureSaving ? 'Inserindo...' : 'Inserir figura'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={citationDialogOpen} onOpenChange={setCitationDialogOpen}>
           <DialogContent className="max-w-2xl rounded-[28px] border-border/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(249,250,252,0.98))] p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
@@ -2048,11 +2822,13 @@ export function EditorPage() {
 const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
   value: string
   citationsMap: Map<string, Citation>
+  figuresMap: Map<string, Figure>
   onChange: (value: string) => void
   placeholder: string
-}>(({ value, citationsMap, onChange, placeholder }, ref) => {
+}>(({ value, citationsMap, figuresMap, onChange, placeholder }, ref) => {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const rawValueRef = useRef(value)
+  const lastSelectionRef = useRef<{ start: number; end: number } | null>(null)
 
   useEffect(() => {
     const root = rootRef.current
@@ -2062,7 +2838,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
     rawValueRef.current = value
 
     if (needsRerender) {
-      renderContentEditableValue(root, value, citationsMap)
+      renderContentEditableValue(root, value, citationsMap, figuresMap)
     } else {
       Array.from(root.querySelectorAll<HTMLElement>('[data-citation-id]')).forEach((chip) => {
         const citationId = chip.dataset.citationId ?? ''
@@ -2072,8 +2848,36 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
         chip.title = getCitationChipTooltip(citationId, citation)
         chip.setAttribute('aria-label', getCitationChipTooltip(citationId, citation))
       })
+      Array.from(root.querySelectorAll<HTMLElement>('[data-figure-id]')).forEach((chip) => {
+        const figureId = chip.dataset.figureId ?? ''
+        const figure = figuresMap.get(figureId)
+        const figureNodes = Array.from(root.querySelectorAll<HTMLElement>('[data-figure-id]'))
+        const figureNumber = figureNodes.findIndex((node) => node.dataset.figureId === figureId) + 1
+        const nextNode = createFigureChipNode(document, figureId, figure, figureNumber)
+        chip.replaceWith(nextNode)
+      })
     }
-  }, [citationsMap, value])
+  }, [citationsMap, figuresMap, value])
+
+  useEffect(() => {
+    const updateSelectionSnapshot = () => {
+      const root = rootRef.current
+      const selection = window.getSelection()
+      if (!root || !selection || selection.rangeCount === 0) return
+      if (!root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) return
+
+      const range = selection.getRangeAt(0)
+      lastSelectionRef.current = {
+        start: getSerializedOffset(root, range.startContainer, range.startOffset),
+        end: getSerializedOffset(root, range.endContainer, range.endOffset),
+      }
+    }
+
+    document.addEventListener('selectionchange', updateSelectionSnapshot)
+    return () => {
+      document.removeEventListener('selectionchange', updateSelectionSnapshot)
+    }
+  }, [])
 
   useImperativeHandle(ref, () => ({
     focusAtEnd() {
@@ -2081,15 +2885,25 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       if (!root) return
       placeCaretAtEnd(root)
     },
+    focusAtOffset(offset: number) {
+      const root = rootRef.current
+      if (!root) return
+      placeCaretAtSerializedOffset(root, offset)
+    },
     insertCitation(citationId: string, citationOverride?: Citation) {
       const root = rootRef.current
       if (!root) return value
 
       const selection = window.getSelection()
       const chip = createCitationChipNode(document, citationId, citationOverride ?? citationsMap.get(citationId))
+      root.focus()
 
       if (!selection || selection.rangeCount === 0 || !root.contains(selection.anchorNode)) {
-        placeCaretAtEnd(root)
+        if (lastSelectionRef.current) {
+          placeCaretAtSerializedOffset(root, lastSelectionRef.current.start)
+        } else {
+          placeCaretAtEnd(root)
+        }
       }
 
       const activeSelection = window.getSelection()
@@ -2102,10 +2916,44 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
 
       const nextValue = serializeEditorContent(root)
       rawValueRef.current = nextValue
+      lastSelectionRef.current = null
       onChange(nextValue)
       return nextValue
     },
-  }), [citationsMap, onChange, value])
+    insertFigure(figureId: string, figureOverride?: Figure) {
+      const root = rootRef.current
+      if (!root) {
+        return { value, caretOffset: value.length }
+      }
+
+      const selection = window.getSelection()
+      const marker = buildFigureMarker(figureId)
+      const nextFiguresMap = figureOverride
+        ? new Map(figuresMap).set(figureId, figureOverride)
+        : figuresMap
+      const range = selection && selection.rangeCount > 0 && root.contains(selection.anchorNode)
+        ? selection.getRangeAt(0)
+        : null
+      const startOffset = range
+        ? getSerializedOffset(root, range.startContainer, range.startOffset)
+        : lastSelectionRef.current?.start ?? value.length
+      const endOffset = range
+        ? getSerializedOffset(root, range.endContainer, range.endOffset)
+        : lastSelectionRef.current?.end ?? startOffset
+      const { nextValue, caretOffset } = buildFigureInsertionContent(value, startOffset, endOffset, marker)
+
+      rawValueRef.current = nextValue
+      renderContentEditableValue(root, nextValue, citationsMap, nextFiguresMap)
+      window.requestAnimationFrame(() => {
+        placeCaretAtSerializedOffset(root, caretOffset)
+      })
+
+      rawValueRef.current = nextValue
+      lastSelectionRef.current = { start: caretOffset, end: caretOffset }
+      onChange(nextValue)
+      return { value: nextValue, caretOffset }
+    },
+  }), [citationsMap, figuresMap, onChange, value])
 
   function emitCurrentValue() {
     const root = rootRef.current
@@ -2146,7 +2994,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
         return container.childNodes[offset] ?? null
       })()
 
-      if (sibling instanceof HTMLElement && sibling.dataset.citationId) {
+      if (sibling instanceof HTMLElement && (sibling.dataset.citationId || sibling.dataset.figureId)) {
         event.preventDefault()
         const nextCaretTarget = event.key === 'Backspace' ? sibling.previousSibling : sibling.nextSibling
         sibling.remove()

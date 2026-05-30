@@ -51,7 +51,8 @@ public record ProjectDetailResponse(
         int exportProgress,
         List<String> pendingExportItems,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        String templateProfile
 ) {
     public static ProjectDetailResponse from(Project project) {
         return from(project, List.of(), List.of(), false, 0, List.of());
@@ -107,7 +108,8 @@ public record ProjectDetailResponse(
                 exportProgress,
                 pendingExportItems,
                 project.getCreatedAt(),
-                project.getUpdatedAt()
+                project.getUpdatedAt(),
+                project.getTemplateProfile() != null ? project.getTemplateProfile().name() : null
         );
     }
 

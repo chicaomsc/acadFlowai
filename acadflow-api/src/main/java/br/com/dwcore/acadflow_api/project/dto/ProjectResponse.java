@@ -31,7 +31,8 @@ public record ProjectResponse(
         int totalChapters,
         int completedChapters,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        String templateProfile
 ) {
     public static ProjectResponse from(Project project) {
         List<Chapter> chapters = project.getChapters();
@@ -57,7 +58,8 @@ public record ProjectResponse(
                 chapters.size(),
                 (int) chapters.stream().filter(c -> c.getStatus() == ChapterStatus.APPROVED).count(),
                 project.getCreatedAt(),
-                project.getUpdatedAt()
+                project.getUpdatedAt(),
+                project.getTemplateProfile() != null ? project.getTemplateProfile().name() : null
         );
     }
 

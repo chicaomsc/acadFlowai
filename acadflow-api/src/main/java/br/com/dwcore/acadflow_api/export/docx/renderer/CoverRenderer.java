@@ -1,47 +1,62 @@
 package br.com.dwcore.acadflow_api.export.docx.renderer;
 
 import br.com.dwcore.acadflow_api.export.docx.DocxHelper;
+import br.com.dwcore.acadflow_api.export.template.AcademicTemplate;
+import br.com.dwcore.acadflow_api.export.template.AcademicTemplateRegistry;
 import br.com.dwcore.acadflow_api.project.domain.Project;
-import org.apache.poi.xwpf.usermodel.XWPFDocument;
-import org.apache.poi.xwpf.usermodel.XWPFParagraph;
-import org.apache.poi.xwpf.usermodel.XWPFRun;
-import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
+import org.apache.poi.xwpf.usermodel.*;
 
 public class CoverRenderer {
 
     public void render(XWPFDocument doc, Project project) {
-        for (int i = 0; i < 4; i++) DocxHelper.emptyLine(doc);
-
-        DocxHelper.centeredParagraph(doc, project.getInstitution(), 12, true);
-        DocxHelper.emptyLine(doc);
-        if (project.getCourse() != null) {
-            DocxHelper.centeredParagraph(doc, "Curso de " + project.getCourse(), 12, false);
-        }
-
-        for (int i = 0; i < 6; i++) DocxHelper.emptyLine(doc);
-
-        DocxHelper.centeredParagraph(doc, project.getUser().getName().toUpperCase(), 12, true);
-
-        for (int i = 0; i < 6; i++) DocxHelper.emptyLine(doc);
-
-        DocxHelper.centeredParagraph(doc, project.getTitle().toUpperCase(), 14, true);
-        if (project.getSubtitle() != null && !project.getSubtitle().isBlank()) {
-            DocxHelper.emptyLine(doc);
-            DocxHelper.centeredParagraph(doc, project.getSubtitle(), 12, false);
-        }
-
-        for (int i = 0; i < 8; i++) DocxHelper.emptyLine(doc);
-
-        String cityYear = buildCityYear(project);
-        DocxHelper.centeredParagraph(doc, cityYear, 12, false);
+        render(doc, project, AcademicTemplateRegistry.ABNT_GENERIC);
     }
 
-    private String buildCityYear(Project project) {
-        String city = project.getDefenseCity() != null ? project.getDefenseCity() : "";
-        String year = project.getDefenseYear() != null ? String.valueOf(project.getDefenseYear()) : "";
-        if (!city.isBlank() && !year.isBlank()) return city + "\n" + year;
-        if (!city.isBlank()) return city;
-        if (!year.isBlank()) return year;
-        return "";
+    public void render(XWPFDocument doc, Project project, AcademicTemplate template) {
+        // template accepted for future profile-specific cover variations;
+        // base structure (institution, author, title, city/year) is common across all profiles.
+
+        // ── Institution / course — top area ──────────────────────────────────
+        para(doc, project.getInstitution(), DocxHelper.FONT_BODY, true,
+                DocxHelper.SPC_COVER_TOP, DocxHelper.STYLE_COVER_TOP);
+        if (project.getCourse() != null && !project.getCourse().isBlank()) {
+            para(doc, "Curso de " + project.getCourse(), DocxHelper.FONT_BODY, false,
+                    DocxHelper.SPC_COVER_NEARBY, DocxHelper.STYLE_COVER_TOP);
+        }
+
+        // ── Author — upper-centre ─────────────────────────────────────────────
+        para(doc, project.getUser().getName().toUpperCase(), DocxHelper.FONT_BODY, true,
+                DocxHelper.SPC_COVER_GAP, DocxHelper.STYLE_COVER_CENTER);
+
+        // ── Title — centre ────────────────────────────────────────────────────
+        para(doc, project.getTitle().toUpperCase(), DocxHelper.FONT_BODY, true,
+                DocxHelper.SPC_COVER_GAP, DocxHelper.STYLE_COVER_CENTER);
+        if (project.getSubtitle() != null && !project.getSubtitle().isBlank()) {
+            para(doc, project.getSubtitle(), DocxHelper.FONT_BODY, false,
+                    DocxHelper.SPC_COVER_NEARBY, DocxHelper.STYLE_COVER_CENTER);
+        }
+
+        // ── City / Year — lower area ──────────────────────────────────────────
+        if (project.getDefenseCity() != null && !project.getDefenseCity().isBlank()) {
+            para(doc, project.getDefenseCity(), DocxHelper.FONT_BODY, false,
+                    DocxHelper.SPC_COVER_CITY_GAP, DocxHelper.STYLE_COVER_BOTTOM);
+        }
+        if (project.getDefenseYear() != null) {
+            para(doc, String.valueOf(project.getDefenseYear()), DocxHelper.FONT_BODY, false,
+                    DocxHelper.SPC_COVER_NEARBY, DocxHelper.STYLE_COVER_BOTTOM);
+        }
+    }
+
+    private XWPFParagraph para(XWPFDocument doc, String text, int pts, boolean bold,
+                                int spacingBefore, String style) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setStyle(style);
+        p.setAlignment(ParagraphAlignment.CENTER);
+        p.setSpacingBetween(DocxHelper.SPACING_BODY, LineSpacingRule.AUTO);
+        p.setSpacingBefore(spacingBefore);
+        XWPFRun run = p.createRun();
+        DocxHelper.applyFont(run, pts, bold);
+        run.setText(text != null ? text : "");
+        return p;
     }
 }

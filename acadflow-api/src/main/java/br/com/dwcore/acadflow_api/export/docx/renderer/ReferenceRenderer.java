@@ -1,6 +1,8 @@
 package br.com.dwcore.acadflow_api.export.docx.renderer;
 
 import br.com.dwcore.acadflow_api.export.docx.DocxHelper;
+import br.com.dwcore.acadflow_api.export.template.AcademicTemplate;
+import br.com.dwcore.acadflow_api.export.template.AcademicTemplateRegistry;
 import br.com.dwcore.acadflow_api.reference.domain.Reference;
 import org.apache.poi.xwpf.usermodel.*;
 
@@ -10,8 +12,11 @@ import java.util.List;
 public class ReferenceRenderer {
 
     public void render(XWPFDocument doc, List<Reference> references) {
-        DocxHelper.sectionHeading(doc, "Referências");
-        DocxHelper.emptyLine(doc);
+        render(doc, references, AcademicTemplateRegistry.ABNT_GENERIC);
+    }
+
+    public void render(XWPFDocument doc, List<Reference> references, AcademicTemplate template) {
+        DocxHelper.sectionHeading(doc, template.referencesLabel());
 
         references.stream()
                 .sorted(Comparator.comparing(
@@ -26,14 +31,15 @@ public class ReferenceRenderer {
                 : fallbackFormat(ref);
 
         XWPFParagraph p = doc.createParagraph();
-        p.setAlignment(ParagraphAlignment.BOTH);
-        p.setSpacingBetween(1.0, LineSpacingRule.AUTO);
-        p.setSpacingAfter(240);
-        p.setIndentationLeft(720);
-        p.setIndentationHanging(720); // hanging indent for ABNT
-
+        p.setStyle(DocxHelper.STYLE_REF);
+        p.setAlignment(ParagraphAlignment.LEFT);
+        p.setSpacingBetween(DocxHelper.SPACING_SINGLE, LineSpacingRule.AUTO);
+        p.setSpacingBefore(0);
+        p.setSpacingAfter(DocxHelper.SPC_AFTER_REF);
+        p.setIndentationLeft(DocxHelper.INDENT_REF_HANGING);
+        p.setIndentationHanging(DocxHelper.INDENT_REF_HANGING);
         XWPFRun run = p.createRun();
-        DocxHelper.applyFont(run, 12, false);
+        DocxHelper.applyFont(run, DocxHelper.FONT_BODY, false);
         run.setText(formatted);
     }
 
@@ -42,8 +48,7 @@ public class ReferenceRenderer {
                 ? ref.getAuthors() : "AUTOR NÃO INFORMADO";
         String title = ref.getTitle() != null && !ref.getTitle().isBlank()
                 ? ref.getTitle() : "TÍTULO NÃO INFORMADO";
-        String year = ref.getYear() != null
-                ? String.valueOf(ref.getYear()) : "s.d.";
+        String year = ref.getYear() != null ? String.valueOf(ref.getYear()) : "s.d.";
         return authors + ". " + title + ". " + year + ".";
     }
 }

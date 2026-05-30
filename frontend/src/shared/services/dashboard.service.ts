@@ -27,6 +27,7 @@ function createEmptyProject(): Project & { advisorName?: string } {
     course: '',
     institution: '',
     norm: 'ABNT',
+    templateProfile: 'ABNT_GENERIC',
     deadline: now,
     status: 'planning',
     progress: 0,

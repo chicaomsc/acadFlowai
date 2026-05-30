@@ -4,6 +4,8 @@ import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterStatus;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
 import br.com.dwcore.acadflow_api.export.docx.DocxBuilder;
+import br.com.dwcore.acadflow_api.export.docx.dto.LoadedFigure;
+import br.com.dwcore.acadflow_api.figure.domain.Figure;
 import br.com.dwcore.acadflow_api.project.domain.AcademicDegree;
 import br.com.dwcore.acadflow_api.project.domain.AcademicNorm;
 import br.com.dwcore.acadflow_api.project.domain.Project;
@@ -18,10 +20,13 @@ import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -222,5 +227,96 @@ class DocxBuilderTest {
 
         assertThatCode(() -> docxBuilder.build(project, chapters, references))
                 .doesNotThrowAnyException();
+    }
+
+    // ── page break sequence (BUG-01 / BUG-02) ────────────────────────────────
+
+    private static final byte[] MINIMAL_PNG = {
+        (byte)0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,
+        0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,
+        0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,
+        0x08,0x02,0x00,0x00,0x00,(byte)0x90,0x77,0x53,(byte)0xde,
+        0x00,0x00,0x00,0x0c,0x49,0x44,0x41,0x54,
+        0x08,(byte)0xd7,0x63,(byte)0xf8,(byte)0xcf,(byte)0xc0,0x00,0x00,
+        0x00,0x02,0x00,0x01,(byte)0xe2,0x21,(byte)0xbc,0x33,
+        0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,
+        (byte)0xae,0x42,0x60,(byte)0x82
+    };
+
+    private Figure buildFigure(String caption) {
+        return Figure.builder().id(UUID.randomUUID()).caption(caption)
+                .mimeType("image/png").widthPercent(100)
+                .storageKey("proj/fig.png").originalFilename("fig.png")
+                .fileSizeBytes(67L).createdAt(LocalDateTime.now()).build();
+    }
+
+    @Test
+    void shouldSeparateListaFigurasFromSumarioWithPageBreak() throws Exception {
+        User user = buildUser();
+        Project project = buildProject(user);
+        Figure fig = buildFigure("Diagrama de classes");
+        UUID figId = fig.getId();
+
+        Chapter chapWithFig = chapter(project, ChapterType.INTRODUCTION, "Introdução", 1,
+                "[[@FIG:" + figId + "]]");
+
+        byte[] result = docxBuilder.build(project, List.of(chapWithFig), List.of(),
+                Map.of(), Map.of(figId, new LoadedFigure(fig, MINIMAL_PNG)));
+
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(result))) {
+            List<String> texts = doc.getParagraphs().stream()
+                    .map(XWPFParagraph::getText)
+                    .collect(Collectors.toList());
+
+            int listaIdx = IntStream.range(0, texts.size())
+                    .filter(i -> texts.get(i).contains("LISTA DE FIGURAS"))
+                    .findFirst().orElse(-1);
+            int sumarioIdx = IntStream.range(0, texts.size())
+                    .filter(i -> "SUMÁRIO".equals(texts.get(i)))
+                    .findFirst().orElse(-1);
+
+            assertThat(listaIdx).as("LISTA DE FIGURAS deve estar presente").isGreaterThan(-1);
+            assertThat(sumarioIdx).as("SUMÁRIO deve estar presente").isGreaterThan(-1);
+            assertThat(sumarioIdx).as("SUMÁRIO deve vir após LISTA DE FIGURAS").isGreaterThan(listaIdx);
+
+            // Paragraph immediately before SUMÁRIO must be the empty page-break paragraph
+            assertThat(texts.get(sumarioIdx - 1))
+                    .as("parágrafo de page break deve separar LISTA DE FIGURAS de SUMÁRIO")
+                    .isEmpty();
+        }
+    }
+
+    @Test
+    void shouldNotInsertExtraPageBreakBetweenAbstractAndListaFiguras() throws Exception {
+        User user = buildUser();
+        Project project = buildProject(user);
+        Figure fig = buildFigure("Arquitetura do sistema");
+        UUID figId = fig.getId();
+
+        Chapter chapWithFig = chapter(project, ChapterType.INTRODUCTION, "Introdução", 1,
+                "[[@FIG:" + figId + "]]");
+
+        byte[] result = docxBuilder.build(project, List.of(chapWithFig), List.of(),
+                Map.of(), Map.of(figId, new LoadedFigure(fig, MINIMAL_PNG)));
+
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(result))) {
+            List<String> texts = doc.getParagraphs().stream()
+                    .map(XWPFParagraph::getText)
+                    .collect(Collectors.toList());
+
+            int listaIdx = IntStream.range(0, texts.size())
+                    .filter(i -> texts.get(i).contains("LISTA DE FIGURAS"))
+                    .findFirst().orElse(-1);
+
+            assertThat(listaIdx).as("LISTA DE FIGURAS deve estar presente").isGreaterThan(1);
+
+            // Exactly ONE empty paragraph immediately before LISTA DE FIGURAS (the single page break)
+            assertThat(texts.get(listaIdx - 1))
+                    .as("deve haver exatamente um page break antes de LISTA DE FIGURAS")
+                    .isEmpty();
+            assertThat(texts.get(listaIdx - 2))
+                    .as("não deve haver dois page breaks consecutivos antes de LISTA DE FIGURAS")
+                    .isNotEmpty();
+        }
     }
 }

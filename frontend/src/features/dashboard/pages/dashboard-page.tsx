@@ -5,6 +5,7 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock3,
+  Download,
   FileText,
   Sparkles,
   TrendingUp,
@@ -151,12 +152,20 @@ export function DashboardPage() {
             title="Continuar escrita"
             description="Este é o ponto de maior impacto no seu avanço agora."
             action={
-              <Button asChild className="rounded-2xl">
-                <Link to={`/editor/${data.activeProject.id}`}>
-                  Abrir editor
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
+              <div className="flex items-center gap-3">
+                <Button variant="outline" asChild className="rounded-2xl">
+                  <Link to={`/projects/${data.activeProject.id}/export`}>
+                    Exportar DOCX
+                    <Download className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button asChild className="rounded-2xl">
+                  <Link to={`/editor/${data.activeProject.id}`}>
+                    Abrir editor
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+              </div>
             }
             className="surface-card-strong h-auto self-start border-primary/12 bg-[linear-gradient(180deg,rgba(18,44,90,0.05),rgba(255,255,255,0.96))]"
           >

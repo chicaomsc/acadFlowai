@@ -1,68 +1,82 @@
 package br.com.dwcore.acadflow_api.export.docx.renderer;
 
 import br.com.dwcore.acadflow_api.export.docx.DocxHelper;
+import br.com.dwcore.acadflow_api.export.template.AcademicTemplate;
+import br.com.dwcore.acadflow_api.export.template.AcademicTemplateRegistry;
 import br.com.dwcore.acadflow_api.project.domain.Project;
-import org.apache.poi.xwpf.usermodel.XWPFDocument;
-import org.apache.poi.xwpf.usermodel.XWPFParagraph;
-import org.apache.poi.xwpf.usermodel.XWPFRun;
-import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
+import org.apache.poi.xwpf.usermodel.*;
 
 public class TitlePageRenderer {
 
     public void render(XWPFDocument doc, Project project) {
-        for (int i = 0; i < 2; i++) DocxHelper.emptyLine(doc);
+        render(doc, project, AcademicTemplateRegistry.ABNT_GENERIC);
+    }
 
-        DocxHelper.centeredParagraph(doc, project.getUser().getName().toUpperCase(), 12, true);
+    public void render(XWPFDocument doc, Project project, AcademicTemplate template) {
+        // Author
+        centeredPara(doc, project.getUser().getName().toUpperCase(),
+                DocxHelper.FONT_BODY, true, 1134, DocxHelper.STYLE_COVER_CENTER);
 
-        for (int i = 0; i < 4; i++) DocxHelper.emptyLine(doc);
-
-        DocxHelper.centeredParagraph(doc, project.getTitle().toUpperCase(), 14, true);
+        // Title
+        centeredPara(doc, project.getTitle().toUpperCase(),
+                DocxHelper.FONT_BODY, true, 2268, DocxHelper.STYLE_COVER_CENTER);
         if (project.getSubtitle() != null && !project.getSubtitle().isBlank()) {
-            DocxHelper.emptyLine(doc);
-            DocxHelper.centeredParagraph(doc, project.getSubtitle(), 12, false);
+            centeredPara(doc, project.getSubtitle(), DocxHelper.FONT_BODY, false, 240,
+                    DocxHelper.STYLE_COVER_CENTER);
         }
 
-        for (int i = 0; i < 3; i++) DocxHelper.emptyLine(doc);
+        // Nature statement + advisor (uses template-specific pattern)
+        addNatureStatement(doc, project, template);
 
-        addNatureStatement(doc, project);
-
-        for (int i = 0; i < 4; i++) DocxHelper.emptyLine(doc);
-
-        String cityYear = "";
-        if (project.getDefenseCity() != null) cityYear += project.getDefenseCity();
+        // City / Year
+        if (project.getDefenseCity() != null && !project.getDefenseCity().isBlank()) {
+            centeredPara(doc, project.getDefenseCity(), DocxHelper.FONT_BODY, false, 2835,
+                    DocxHelper.STYLE_COVER_BOTTOM);
+        }
         if (project.getDefenseYear() != null) {
-            if (!cityYear.isBlank()) cityYear += "\n";
-            cityYear += project.getDefenseYear();
-        }
-        if (!cityYear.isBlank()) {
-            DocxHelper.centeredParagraph(doc, cityYear, 12, false);
+            centeredPara(doc, String.valueOf(project.getDefenseYear()), DocxHelper.FONT_BODY, false, 240,
+                    DocxHelper.STYLE_COVER_BOTTOM);
         }
     }
 
-    private void addNatureStatement(XWPFDocument doc, Project project) {
+    private void addNatureStatement(XWPFDocument doc, Project project, AcademicTemplate template) {
         XWPFParagraph p = doc.createParagraph();
-        p.setAlignment(ParagraphAlignment.LEFT);
-        p.setSpacingBetween(1.5, org.apache.poi.xwpf.usermodel.LineSpacingRule.AUTO);
-        p.setIndentationLeft(4320); // ~7.5cm indent for nature statement
-
+        p.setStyle(DocxHelper.STYLE_BODY);
+        p.setAlignment(ParagraphAlignment.BOTH);
+        p.setSpacingBetween(DocxHelper.SPACING_BODY, LineSpacingRule.AUTO);
+        p.setSpacingBefore(1701);
+        p.setSpacingAfter(0);
+        p.setIndentationLeft(DocxHelper.INDENT_NATURE_STMT);
         XWPFRun run = p.createRun();
-        DocxHelper.applyFont(run, 12, false);
-
-        String degree = project.getAcademicDegree() != null ? project.getAcademicDegree().getLabel() : "conclusão de curso";
-        String nature = "Trabalho apresentado ao curso de " + project.getCourse()
-                + " da " + project.getInstitution()
-                + " como requisito parcial para a obtenção do grau de " + degree + ".";
-        run.setText(nature);
+        DocxHelper.applyFont(run, DocxHelper.FONT_BODY, false);
+        String degree = project.getAcademicDegree() != null
+                ? project.getAcademicDegree().getLabel() : "conclusão de curso";
+        run.setText(template.buildNatureStatement(project.getCourse(), project.getInstitution(), degree));
 
         if (project.getAdvisorName() != null && !project.getAdvisorName().isBlank()) {
-            DocxHelper.emptyLine(doc);
-            XWPFParagraph advisorPara = doc.createParagraph();
-            advisorPara.setAlignment(ParagraphAlignment.LEFT);
-            advisorPara.setSpacingBetween(1.5, org.apache.poi.xwpf.usermodel.LineSpacingRule.AUTO);
-            advisorPara.setIndentationLeft(4320);
-            XWPFRun advisorRun = advisorPara.createRun();
-            DocxHelper.applyFont(advisorRun, 12, false);
-            advisorRun.setText("Orientador(a): " + project.getAdvisorName());
+            XWPFParagraph ap = doc.createParagraph();
+            ap.setStyle(DocxHelper.STYLE_BODY);
+            ap.setAlignment(ParagraphAlignment.BOTH);
+            ap.setSpacingBetween(DocxHelper.SPACING_BODY, LineSpacingRule.AUTO);
+            ap.setSpacingBefore(DocxHelper.SPC_AFTER_HEADING);
+            ap.setSpacingAfter(0);
+            ap.setIndentationLeft(DocxHelper.INDENT_NATURE_STMT);
+            XWPFRun ar = ap.createRun();
+            DocxHelper.applyFont(ar, DocxHelper.FONT_BODY, false);
+            ar.setText("Orientador(a): " + project.getAdvisorName());
         }
+    }
+
+    private XWPFParagraph centeredPara(XWPFDocument doc, String text, int pts, boolean bold,
+                                        int spacingBefore, String style) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setStyle(style);
+        p.setAlignment(ParagraphAlignment.CENTER);
+        p.setSpacingBetween(DocxHelper.SPACING_BODY, LineSpacingRule.AUTO);
+        p.setSpacingBefore(spacingBefore);
+        XWPFRun run = p.createRun();
+        DocxHelper.applyFont(run, pts, bold);
+        run.setText(text != null ? text : "");
+        return p;
     }
 }

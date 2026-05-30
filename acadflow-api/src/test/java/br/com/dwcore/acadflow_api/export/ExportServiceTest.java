@@ -11,6 +11,9 @@ import br.com.dwcore.acadflow_api.citation.repository.CitationRepository;
 import br.com.dwcore.acadflow_api.export.docx.DocxBuilder;
 import br.com.dwcore.acadflow_api.export.dto.CreateExportRequest;
 import br.com.dwcore.acadflow_api.export.service.ExportService;
+import br.com.dwcore.acadflow_api.figure.domain.Figure;
+import br.com.dwcore.acadflow_api.figure.repository.FigureRepository;
+import br.com.dwcore.acadflow_api.figure.service.FigureStorageService;
 import br.com.dwcore.acadflow_api.project.domain.AcademicNorm;
 import br.com.dwcore.acadflow_api.project.domain.Project;
 import br.com.dwcore.acadflow_api.project.domain.ProjectStatus;
@@ -54,6 +57,8 @@ class ExportServiceTest {
     @Mock private ChapterRepository chapterRepository;
     @Mock private ReferenceRepository referenceRepository;
     @Mock private CitationRepository citationRepository;
+    @Mock private FigureRepository figureRepository;
+    @Mock private FigureStorageService figureStorageService;
     @Mock private UserService userService;
     @Mock private DocxBuilder docxBuilder;
 
@@ -136,6 +141,7 @@ class ExportServiceTest {
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of());
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "pdf", user.getEmail());
 
@@ -158,6 +164,7 @@ class ExportServiceTest {
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "pdf", user.getEmail());
 
@@ -181,6 +188,7 @@ class ExportServiceTest {
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of());
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
 
         assertThatThrownBy(() -> exportService.createExport(
                 new CreateExportRequest(project.getId(), "pdf"), user.getEmail()))
@@ -199,7 +207,8 @@ class ExportServiceTest {
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
-        when(docxBuilder.build(any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+        when(docxBuilder.build(any(), any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
 
         var artifact = exportService.createExport(
                 new CreateExportRequest(project.getId(), "docx"), user.getEmail());
@@ -223,6 +232,7 @@ class ExportServiceTest {
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
 
         assertThatThrownBy(() -> exportService.createExport(
                 new CreateExportRequest(project.getId(), "pdf"), user.getEmail()))
@@ -241,6 +251,7 @@ class ExportServiceTest {
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
 
         assertThatThrownBy(() -> exportService.createExport(
                 new CreateExportRequest(project.getId(), "slides"), user.getEmail()))
@@ -264,7 +275,8 @@ class ExportServiceTest {
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
-        when(docxBuilder.build(any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+        when(docxBuilder.build(any(), any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
 
         var artifact = exportService.createExport(
                 new CreateExportRequest(project.getId(), "docx"), user.getEmail());
@@ -307,6 +319,7 @@ class ExportServiceTest {
                         buildReference(project, true),
                         buildReference(project, false)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
 
@@ -328,6 +341,7 @@ class ExportServiceTest {
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "pdf", user.getEmail());
 
@@ -353,6 +367,7 @@ class ExportServiceTest {
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "pdf", user.getEmail());
 
@@ -374,6 +389,7 @@ class ExportServiceTest {
         when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
                 .thenReturn(List.of(buildReference(project, true)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
 
@@ -399,10 +415,121 @@ class ExportServiceTest {
                 .id(knownId).type(CitationType.INDIRECT)
                 .displayMode(CitationDisplayMode.PARENTHETICAL).build();
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of(knownCitation));
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
 
         var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
 
         assertThat(status.ready()).isTrue();
         assertThat(status.pendingItems()).noneMatch(s -> s.contains("citação inválida"));
+    }
+
+    @Test
+    void shouldBlockExportWhenChapterHasOrphanFigureMarker() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID orphanFigId = UUID.randomUUID();
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String withOrphanFig = "Texto com figura inválida [[@FIG:" + orphanFigId + "]] aqui.";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withOrphanFig));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        // figureRepository returns empty — orphan marker not resolved
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isFalse();
+        assertThat(status.pendingItems()).anyMatch(s -> s.contains("figura inválida"));
+    }
+
+    @Test
+    void shouldNotBlockWhenAllFigureMarkersAreKnown() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID knownFigId = UUID.randomUUID();
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String withKnownFig = "Texto com figura válida [[@FIG:" + knownFigId + "]].";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withKnownFig));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+
+        Figure knownFigure = Figure.builder()
+                .id(knownFigId).caption("Figura válida").mimeType("image/png")
+                .storageKey("proj/fig.png").fileSizeBytes(100L).widthPercent(100).build();
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId()))
+                .thenReturn(List.of(knownFigure));
+        when(figureStorageService.exists(knownFigure.getStorageKey())).thenReturn(true);
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isTrue();
+        assertThat(status.pendingItems()).noneMatch(s -> s.contains("figura inválida"));
+        assertThat(status.pendingItems()).noneMatch(s -> s.contains("arquivo disponível"));
+    }
+
+    @Test
+    void shouldBlockExportStatusWhenFigureFileMissingFromStorage() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID figId = UUID.randomUUID();
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String withFigMarker = "Texto com figura [[@FIG:" + figId + "]].";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withFigMarker));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+
+        Figure fig = Figure.builder()
+                .id(figId).caption("Diagrama sem arquivo").mimeType("image/png")
+                .storageKey("proj/missing.png").fileSizeBytes(100L).widthPercent(100).build();
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId()))
+                .thenReturn(List.of(fig));
+        when(figureStorageService.exists(fig.getStorageKey())).thenReturn(false);
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isFalse();
+        assertThat(status.pendingItems()).anyMatch(s -> s.contains("Diagrama sem arquivo") && s.contains("arquivo disponível"));
+    }
+
+    @Test
+    void shouldNotDuplicateStorageAlertForSameFigureReferencedInMultipleChapters() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID figId = UUID.randomUUID();
+
+        mockOwnership(user, project);
+        Figure fig = Figure.builder()
+                .id(figId).caption("Figura duplicada").mimeType("image/png")
+                .storageKey("proj/dup.png").fileSizeBytes(100L).widthPercent(100).build();
+
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String marker = "[[@FIG:" + figId + "]]";
+        // same figure referenced in two chapters
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", "Intro " + marker));
+        chapters.set(1, buildChapter(project, ChapterType.THEORETICAL_FOUNDATION, "Fundamentação", "Fund " + marker));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of(fig));
+        when(figureStorageService.exists(fig.getStorageKey())).thenReturn(false);
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        long storageAlerts = status.pendingItems().stream()
+                .filter(s -> s.contains("arquivo disponível")).count();
+        assertThat(storageAlerts).as("same figure missing from storage should only generate one alert").isEqualTo(1);
     }
 }

@@ -25,7 +25,32 @@ import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select'
 import { Textarea } from '@/shared/ui/textarea'
-import { academicDegreeOptions, getAcademicDegreeLabel, isProjectNotFoundError } from '@/shared/services/project.service'
+import {
+  academicDegreeOptions,
+  academicTemplateOptions,
+  getAcademicDegreeLabel,
+  getAcademicTemplateLabel,
+  isProjectNotFoundError,
+} from '@/shared/services/project.service'
+
+type ProjectEditFormState = {
+  title: string
+  subtitle: string
+  course: string
+  institution: string
+  academicDegree: string
+  advisorName: string
+  deadline: string
+  norm: 'ABNT' | 'APA' | 'Vancouver'
+  templateProfile: 'ABNT_GENERIC' | 'FEMAF'
+  defenseCity: string
+  defenseYear: string
+  theme: string
+  researchProblem: string
+  generalObjective: string
+  specificObjectives: string
+  keywords: string
+}
 
 export function ProjectDetailsPage() {
   const navigate = useNavigate()
@@ -41,7 +66,7 @@ export function ProjectDetailsPage() {
   const [saving, setSaving] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
-  const [editForm, setEditForm] = useState({
+  const [editForm, setEditForm] = useState<ProjectEditFormState>({
     title: '',
     subtitle: '',
     course: '',
@@ -50,6 +75,7 @@ export function ProjectDetailsPage() {
     advisorName: '',
     deadline: '',
     norm: 'ABNT' as 'ABNT' | 'APA' | 'Vancouver',
+    templateProfile: 'ABNT_GENERIC' as const,
     defenseCity: '',
     defenseYear: '',
     theme: '',
@@ -77,6 +103,7 @@ export function ProjectDetailsPage() {
       advisorName: data.project.advisorName ?? '',
       deadline: toDateInputValue(data.project.deadline),
       norm: data.project.norm,
+      templateProfile: data.project.templateProfile ?? 'ABNT_GENERIC',
       defenseCity: data.project.defenseCity ?? '',
       defenseYear: data.project.defenseYear ? String(data.project.defenseYear) : '',
       theme: data.project.theme ?? '',
@@ -164,6 +191,7 @@ export function ProjectDetailsPage() {
         advisorName: editForm.advisorName,
         deadline: editForm.deadline,
         norm: editForm.norm,
+        templateProfile: editForm.templateProfile,
         theme: editForm.theme,
         researchProblem: editForm.researchProblem,
         generalObjective: editForm.generalObjective,
@@ -298,7 +326,25 @@ export function ProjectDetailsPage() {
                             </SelectContent>
                           </Select>
                         </Field>
+                        <Field label="Modelo acadêmico" className="md:col-span-2">
+                          <Select
+                            value={editForm.templateProfile}
+                            onValueChange={(value) => setEditForm((current) => ({ ...current, templateProfile: value as ProjectEditFormState['templateProfile'] }))}
+                          >
+                            <SelectTrigger className="h-12 rounded-2xl"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {academicTemplateOptions.map((template) => (
+                                <SelectItem key={template.value} value={template.value}>{template.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
                       </div>
+                      {editForm.templateProfile === 'FEMAF' ? (
+                        <p className="rounded-[18px] border border-border/70 bg-muted/30 px-4 py-3 text-sm leading-6 text-muted-foreground">
+                          Este modelo aplica capa, folha de rosto e estrutura conforme padrão institucional FEMAF.
+                        </p>
+                      ) : null}
                     </ProjectSection>
 
                     <ProjectSection title="Instituição e curso" description="Contexto institucional do projeto.">
@@ -476,8 +522,9 @@ export function ProjectDetailsPage() {
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">{data.project.generalObjective}</p>
               </div>
             </div>
-            <div className="mt-5 grid gap-4 md:grid-cols-3">
+            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <MetaBlock label="Grau acadêmico" value={getAcademicDegreeLabel(data.project.academicDegree)} />
+              <MetaBlock label="Modelo acadêmico" value={getAcademicTemplateLabel(data.project.templateProfile)} />
               <MetaBlock label="Cidade da defesa" value={data.project.defenseCity} />
               <MetaBlock
                 label="Ano da defesa"

@@ -11,6 +11,8 @@ app:
     expiration: 86400000
   export:
     dir: ${java.io.tmpdir}/acadflow/exports-test
+  figures:
+    dir: ${java.io.tmpdir}/acadflow/figures-test
   rate-limit:
     max-requests: 1000
     window-ms: 60000

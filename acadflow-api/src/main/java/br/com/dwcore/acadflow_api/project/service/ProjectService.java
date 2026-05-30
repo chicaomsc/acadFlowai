@@ -86,6 +86,7 @@ public class ProjectService {
                 .abstractPt(request.abstractPt())
                 .abstractEn(request.abstractEn())
                 .keywords(request.keywords())
+                .templateProfile(request.templateProfile())
                 .status(ProjectStatus.IN_PROGRESS)
                 .build();
 
@@ -121,6 +122,7 @@ public class ProjectService {
         if (request.abstractPt() != null)         project.setAbstractPt(request.abstractPt());
         if (request.abstractEn() != null)         project.setAbstractEn(request.abstractEn());
         if (request.keywords() != null)           project.setKeywords(request.keywords());
+        if (request.templateProfile() != null)    project.setTemplateProfile(request.templateProfile());
 
         Project saved = projectRepository.saveAndFlush(project);
         List<Reference> references = referenceRepository.findByProjectIdOrderByCreatedAtDesc(saved.getId());
