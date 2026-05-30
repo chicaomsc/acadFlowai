@@ -767,4 +767,58 @@ class ExportServiceTest {
         assertThat(status.ready()).isTrue();
         assertThat(status.pendingItems()).noneMatch(s -> s.contains("tabela/quadro"));
     }
+
+    @Test
+    void shouldBlockExportWhenChapterHasOrphanXrefChapterMarker() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID orphanChapterId = UUID.randomUUID(); // not in any chapter list
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String withOrphanXref = "Ver [[@XREF:CHAPTER:" + orphanChapterId + "]] para mais detalhes.";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withOrphanXref));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isFalse();
+        assertThat(status.pendingItems()).anyMatch(s -> s.contains("referência cruzada inválida"));
+    }
+
+    @Test
+    void shouldNotBlockWhenXrefChapterMarkerReferencesExistingChapter() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        UUID knownChapterId = chapters.get(1).getId(); // Fundamentação Teórica
+        String withKnownXref = "Conforme [[@XREF:CHAPTER:" + knownChapterId + "]], o estudo...";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withKnownXref));
+        // rebuild list so knownChapterId is actually in it
+        List<Chapter> finalChapters = new ArrayList<>(buildRequiredChapters(project));
+        Chapter intro = buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withKnownXref);
+        Chapter others = buildChapter(project, ChapterType.THEORETICAL_FOUNDATION, "Fundamentação", "Texto.");
+        others = Chapter.builder().id(knownChapterId).project(project)
+                .title("Fundamentação").type(ChapterType.THEORETICAL_FOUNDATION)
+                .status(ChapterStatus.WRITING).orderIndex(2).wordCount(0).targetWordCount(2000)
+                .content("Texto.").build();
+        finalChapters.set(0, intro);
+        finalChapters.set(1, others);
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(finalChapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isTrue();
+        assertThat(status.pendingItems()).noneMatch(s -> s.contains("referência cruzada"));
+    }
 }

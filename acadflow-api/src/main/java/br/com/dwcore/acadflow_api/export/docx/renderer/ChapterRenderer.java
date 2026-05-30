@@ -43,7 +43,7 @@ public class ChapterRenderer {
     );
 
     private static final Pattern XREF_PATTERN = Pattern.compile(
-            "\\[\\[@XREF:(?:FIG|TABLE|QUADRO):" + UUID_PATTERN + "\\]\\]"
+            "\\[\\[@XREF:(?:FIG|TABLE|QUADRO|CHAPTER):" + UUID_PATTERN + "\\]\\]"
     );
 
     private final TableRenderer tableRenderer = new TableRenderer();
@@ -244,7 +244,7 @@ public class ChapterRenderer {
                                    Map<UUID, NumberedTable> numberedTableLookup,
                                    Map<UUID, String> xrefLookup) {
         Pattern combined = Pattern.compile(
-                "\\[\\[@(CITE|FIG|TABLE|QUADRO|XREF:FIG|XREF:TABLE|XREF:QUADRO):(" + UUID_PATTERN + ")\\]\\]"
+                "\\[\\[@(CITE|FIG|TABLE|QUADRO|XREF:FIG|XREF:TABLE|XREF:QUADRO|XREF:CHAPTER):(" + UUID_PATTERN + ")\\]\\]"
         );
 
         List<Object> tokens = new ArrayList<>();

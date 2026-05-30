@@ -163,4 +163,63 @@ class DocxBuilderXrefTest {
                 Map.of(), Map.of(), Map.of(t1.getId(), t1, q1.getId(), q1)))
                 .doesNotThrowAnyException();
     }
+
+    @Test
+    void shouldRenderXrefChapterAsInlineNumberedText() throws Exception {
+        User user = buildUser();
+        Project project = buildProject(user);
+        Chapter intro = chapter(project, ChapterType.INTRODUCTION, "Introdução", 1, "Conteúdo da introdução.");
+        Chapter methodology = chapter(project, ChapterType.METHODOLOGY, "Metodologia", 2,
+                "Conforme [[@XREF:CHAPTER:" + intro.getId() + "]], a metodologia é...");
+
+        byte[] result = docxBuilder.build(project, List.of(intro, methodology), List.of(),
+                Map.of(), Map.of(), Map.of());
+
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(result))) {
+            String text = allText(doc);
+            assertThat(text).contains("Capítulo 1");
+            assertThat(text).doesNotContain("[[@XREF:");
+        }
+    }
+
+    @Test
+    void shouldAssignChapterNumbersByOrderIndex() throws Exception {
+        User user = buildUser();
+        Project project = buildProject(user);
+        Chapter c1 = chapter(project, ChapterType.INTRODUCTION, "Introdução", 1, "Texto.");
+        Chapter c2 = chapter(project, ChapterType.METHODOLOGY, "Metodologia", 2, "Texto.");
+        Chapter c3 = chapter(project, ChapterType.RESULTS, "Resultados", 3,
+                "Ver [[@XREF:CHAPTER:" + c1.getId() + "]] e [[@XREF:CHAPTER:" + c2.getId() + "]].");
+
+        byte[] result = docxBuilder.build(project, List.of(c1, c2, c3), List.of(),
+                Map.of(), Map.of(), Map.of());
+
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(result))) {
+            String text = allText(doc);
+            assertThat(text).contains("Capítulo 1");
+            assertThat(text).contains("Capítulo 2");
+            assertThat(text).doesNotContain("[[@XREF:");
+        }
+    }
+
+    @Test
+    void shouldNotIncludeReferencesChapterInNumbering() throws Exception {
+        User user = buildUser();
+        Project project = buildProject(user);
+        Chapter intro = chapter(project, ChapterType.INTRODUCTION, "Introdução", 1, "Texto.");
+        Chapter refs = chapter(project, ChapterType.REFERENCES, "Referências", 2, null);
+        Chapter conclusion = chapter(project, ChapterType.CONCLUSION, "Conclusão", 3,
+                "Ver [[@XREF:CHAPTER:" + intro.getId() + "]] e nunca referências.");
+
+        byte[] result = docxBuilder.build(project, List.of(intro, refs, conclusion), List.of(),
+                Map.of(), Map.of(), Map.of());
+
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(result))) {
+            String text = allText(doc);
+            // intro = Capítulo 1, refs skipped, conclusion = Capítulo 2
+            assertThat(text).contains("Capítulo 1");
+            assertThat(text).doesNotContain("Capítulo 3");
+            assertThat(text).doesNotContain("[[@XREF:");
+        }
+    }
 }

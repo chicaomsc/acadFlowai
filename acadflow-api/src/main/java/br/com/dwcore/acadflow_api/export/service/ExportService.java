@@ -63,7 +63,7 @@ public class ExportService {
     );
 
     private static final Pattern XREF_MARKER = Pattern.compile(
-            "\\[\\[@XREF:(FIG|TABLE|QUADRO):(" + UUID_PAT + ")\\]\\]"
+            "\\[\\[@XREF:(FIG|TABLE|QUADRO|CHAPTER):(" + UUID_PAT + ")\\]\\]"
     );
 
     private static final Set<ChapterType> REQUIRED_TEXTUAL_TYPES = Set.of(
@@ -340,6 +340,7 @@ public class ExportService {
                 .stream().map(Figure::getId).collect(Collectors.toSet());
         Set<UUID> knownTables = tableRepository.findByProjectIdOrderByCreatedAtAsc(projectId)
                 .stream().map(AcademicTable::getId).collect(Collectors.toSet());
+        Set<UUID> knownChapters = chapters.stream().map(Chapter::getId).collect(Collectors.toSet());
 
         for (Chapter chapter : chapters) {
             if (chapter.getContent() == null || chapter.getContent().isBlank()) continue;
@@ -349,9 +350,10 @@ public class ExportService {
                 String subType = m.group(1);
                 UUID targetId = UUID.fromString(m.group(2));
                 boolean valid = switch (subType) {
-                    case "FIG"           -> knownFigures.contains(targetId);
-                    case "TABLE", "QUADRO" -> knownTables.contains(targetId);
-                    default              -> false;
+                    case "FIG"              -> knownFigures.contains(targetId);
+                    case "TABLE", "QUADRO"  -> knownTables.contains(targetId);
+                    case "CHAPTER"          -> knownChapters.contains(targetId);
+                    default                 -> false;
                 };
                 if (!valid) {
                     pending.add("Capítulo '" + chapter.getTitle()

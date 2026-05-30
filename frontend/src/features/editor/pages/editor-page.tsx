@@ -126,7 +126,7 @@ type QuickReferenceFormState = {
   source: string
   url: string
 }
-type CrossReferenceKind = 'FIG' | 'TABLE' | 'QUADRO'
+type CrossReferenceKind = 'FIG' | 'TABLE' | 'QUADRO' | 'CHAPTER'
 type CrossReferenceFormState = {
   kind: CrossReferenceKind
   targetId: string
@@ -142,7 +142,7 @@ const CITE_MARKER_REGEX = /\[\[@CITE:([^\]]+)\]\]/g
 const FIG_MARKER_REGEX = /\[\[@FIG:([^\]]+)\]\]/g
 const TABLE_MARKER_REGEX = /\[\[@TABLE:([^\]]+)\]\]/g
 const QUADRO_MARKER_REGEX = /\[\[@QUADRO:([^\]]+)\]\]/g
-const XREF_MARKER_REGEX = /\[\[@XREF:(FIG|TABLE|QUADRO):([^\]]+)\]\]/g
+const XREF_MARKER_REGEX = /\[\[@XREF:(FIG|TABLE|QUADRO|CHAPTER):([^\]]+)\]\]/g
 const defaultCitationFormState: CitationFormState = {
   referenceId: '',
   type: 'indirect',
@@ -328,6 +328,7 @@ function buildTabularElementPreviewLabel(item?: TabularElement) {
 function getCrossReferenceNoun(kind: CrossReferenceKind) {
   if (kind === 'FIG') return 'Figura'
   if (kind === 'TABLE') return 'Tabela'
+  if (kind === 'CHAPTER') return 'Capítulo'
   return 'Quadro'
 }
 
@@ -665,7 +666,7 @@ function createTabularElementNode(
   return wrapper
 }
 
-const INLINE_MARKER_REGEX = /\[\[@(CITE|FIG|TABLE|QUADRO):([^\]]+)\]\]|\[\[@XREF:(FIG|TABLE|QUADRO):([^\]]+)\]\]/g
+const INLINE_MARKER_REGEX = /\[\[@(CITE|FIG|TABLE|QUADRO):([^\]]+)\]\]|\[\[@XREF:(FIG|TABLE|QUADRO|CHAPTER):([^\]]+)\]\]/g
 function appendContentWithInlineMarkers(
   root: HTMLElement,
   content: string,
@@ -1481,6 +1482,10 @@ export function EditorPage() {
     () => new Map(quadrosInReadingOrder.map((item, index) => [item.id, index + 1])),
     [quadrosInReadingOrder],
   )
+  const chapterNumberMap = useMemo(
+    () => new Map(textualChapters.map((chapter, index) => [chapter.id, index + 1])),
+    [textualChapters],
+  )
   const crossReferencesMap = useMemo(
     () => {
       const map = new Map<string, CrossReferenceRenderItem>()
@@ -1509,6 +1514,15 @@ export function EditorPage() {
           kind: 'QUADRO',
           label: `Quadro ${index + 1}`,
           tooltip: `Quadro ${index + 1} • ${item.title}${item.sourceText ? ` • ${item.sourceText}` : ''}`,
+        })
+      })
+
+      textualChapters.forEach((chapter, index) => {
+        map.set(`CHAPTER:${chapter.id}`, {
+          id: chapter.id,
+          kind: 'CHAPTER',
+          label: `Capítulo ${index + 1}`,
+          tooltip: `Capítulo ${index + 1} • ${chapter.title}`,
         })
       })
 
@@ -1547,7 +1561,7 @@ export function EditorPage() {
 
       return map
     },
-    [figureNumberMap, figuresInReadingOrder, projectFigures, projectTabularElements, quadroNumberMap, quadrosInReadingOrder, tableNumberMap, tablesInReadingOrder],
+    [figureNumberMap, figuresInReadingOrder, projectFigures, projectTabularElements, quadroNumberMap, quadrosInReadingOrder, tableNumberMap, tablesInReadingOrder, textualChapters],
   )
   const crossReferenceOptions = useMemo(
     () => {
@@ -1599,14 +1613,22 @@ export function EditorPage() {
           description: item.title,
           used: false,
         }))
+      const chapters = textualChapters.map((chapter) => ({
+        id: chapter.id,
+        kind: 'CHAPTER' as const,
+        label: `Capítulo ${chapterNumberMap.get(chapter.id) ?? 1}`,
+        description: chapter.title,
+        used: true,
+      }))
 
       return {
         FIG: [...usedFigures, ...unusedFigures],
         TABLE: [...usedTables, ...unusedTables],
         QUADRO: [...usedQuadros, ...unusedQuadros],
+        CHAPTER: chapters,
       }
     },
-    [figureNumberMap, figuresInReadingOrder, projectFigures, projectTabularElements, quadroNumberMap, quadrosInReadingOrder, tableNumberMap, tablesInReadingOrder],
+    [chapterNumberMap, figureNumberMap, figuresInReadingOrder, projectFigures, projectTabularElements, quadroNumberMap, quadrosInReadingOrder, tableNumberMap, tablesInReadingOrder, textualChapters],
   )
   const currentCrossReferenceOptions = useMemo(
     () => crossReferenceOptions[crossReferenceForm.kind],
@@ -2921,7 +2943,9 @@ export function EditorPage() {
                                       ? 'FIG'
                                       : crossReferenceOptions.TABLE.length > 0
                                         ? 'TABLE'
-                                        : 'QUADRO'
+                                        : crossReferenceOptions.QUADRO.length > 0
+                                          ? 'QUADRO'
+                                          : 'CHAPTER'
                                   const nextOption = crossReferenceOptions[defaultKind][0]
                                   setCrossReferenceFeedback(null)
                                   setCrossReferenceForm({
@@ -2930,7 +2954,7 @@ export function EditorPage() {
                                   })
                                   setCrossReferenceDialogOpen(true)
                                 }}
-                                disabled={!crossReferenceOptions.FIG.length && !crossReferenceOptions.TABLE.length && !crossReferenceOptions.QUADRO.length}
+                                disabled={!crossReferenceOptions.FIG.length && !crossReferenceOptions.TABLE.length && !crossReferenceOptions.QUADRO.length && !crossReferenceOptions.CHAPTER.length}
                               />
                               </div>
                               <div className="flex min-w-max items-center gap-2 pl-3">
@@ -3750,7 +3774,7 @@ export function EditorPage() {
               <div className="space-y-2">
                 <p className="text-sm font-medium text-foreground">Tipo</p>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  {(['FIG', 'TABLE', 'QUADRO'] as CrossReferenceKind[]).map((kind) => (
+                  {(['FIG', 'TABLE', 'QUADRO', 'CHAPTER'] as CrossReferenceKind[]).map((kind) => (
                     <button
                       key={kind}
                       type="button"
