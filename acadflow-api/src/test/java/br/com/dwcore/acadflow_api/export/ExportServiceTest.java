@@ -8,6 +8,7 @@ import br.com.dwcore.acadflow_api.citation.domain.Citation;
 import br.com.dwcore.acadflow_api.citation.domain.CitationDisplayMode;
 import br.com.dwcore.acadflow_api.citation.domain.CitationType;
 import br.com.dwcore.acadflow_api.citation.repository.CitationRepository;
+import br.com.dwcore.acadflow_api.academictable.repository.AcademicTableRepository;
 import br.com.dwcore.acadflow_api.export.docx.DocxBuilder;
 import br.com.dwcore.acadflow_api.export.dto.CreateExportRequest;
 import br.com.dwcore.acadflow_api.export.service.ExportService;
@@ -45,6 +46,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -59,6 +61,7 @@ class ExportServiceTest {
     @Mock private CitationRepository citationRepository;
     @Mock private FigureRepository figureRepository;
     @Mock private FigureStorageService figureStorageService;
+    @Mock private AcademicTableRepository tableRepository;
     @Mock private UserService userService;
     @Mock private DocxBuilder docxBuilder;
 
@@ -68,6 +71,7 @@ class ExportServiceTest {
     @BeforeEach
     void setExportDir() {
         ReflectionTestUtils.setField(exportService, "exportDir", tempDir.toString());
+        lenient().when(tableRepository.findByProjectIdOrderByCreatedAtAsc(any())).thenReturn(List.of());
     }
 
     private User buildUser(String email) {
@@ -208,7 +212,7 @@ class ExportServiceTest {
                 .thenReturn(List.of(buildReference(project, true)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
         when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
-        when(docxBuilder.build(any(), any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
+        when(docxBuilder.build(any(), any(), any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
 
         var artifact = exportService.createExport(
                 new CreateExportRequest(project.getId(), "docx"), user.getEmail());
@@ -276,7 +280,7 @@ class ExportServiceTest {
                 .thenReturn(List.of(buildReference(project, true)));
         when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
         when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
-        when(docxBuilder.build(any(), any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
+        when(docxBuilder.build(any(), any(), any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
 
         var artifact = exportService.createExport(
                 new CreateExportRequest(project.getId(), "docx"), user.getEmail());
@@ -531,5 +535,139 @@ class ExportServiceTest {
         long storageAlerts = status.pendingItems().stream()
                 .filter(s -> s.contains("arquivo disponível")).count();
         assertThat(storageAlerts).as("same figure missing from storage should only generate one alert").isEqualTo(1);
+    }
+
+    @Test
+    void shouldBlockExportWhenChapterHasOrphanTableMarker() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID orphanTableId = UUID.randomUUID();
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String withOrphanTable = "Texto com tabela inválida [[@TABLE:" + orphanTableId + "]] aqui.";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withOrphanTable));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+        // tableRepository returns empty — orphan marker not resolved (lenient @BeforeEach stub applies)
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isFalse();
+        assertThat(status.pendingItems()).anyMatch(s -> s.contains("tabela/quadro inválido"));
+    }
+
+    @Test
+    void shouldNotBlockWhenAllTableMarkersAreKnown() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID knownTableId = UUID.randomUUID();
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String withKnownTable = "Texto com tabela válida [[@TABLE:" + knownTableId + "]].";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withKnownTable));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+
+        br.com.dwcore.acadflow_api.academictable.domain.AcademicTable knownTable =
+                br.com.dwcore.acadflow_api.academictable.domain.AcademicTable.builder()
+                        .id(knownTableId)
+                        .type(br.com.dwcore.acadflow_api.academictable.domain.AcademicTableType.TABLE)
+                        .title("Tabela válida").content("| A |\n|---|\n| 1 |").build();
+        when(tableRepository.findByProjectIdOrderByCreatedAtAsc(project.getId()))
+                .thenReturn(List.of(knownTable));
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isTrue();
+        assertThat(status.pendingItems()).noneMatch(s -> s.contains("tabela/quadro inválido"));
+    }
+
+    @Test
+    void shouldBlockExportWhenChapterHasOrphanQuadroMarker() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID orphanQuadroId = UUID.randomUUID();
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String withOrphanQuadro = "Texto com quadro inválido [[@QUADRO:" + orphanQuadroId + "]] aqui.";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withOrphanQuadro));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+        // tableRepository lenient stub returns List.of() — orphan not resolved
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isFalse();
+        assertThat(status.pendingItems()).anyMatch(s -> s.contains("tabela/quadro inválido"));
+    }
+
+    @Test
+    void shouldNotBlockWhenAllQuadroMarkersAreKnown() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        UUID knownQuadroId = UUID.randomUUID();
+
+        mockOwnership(user, project);
+        List<Chapter> chapters = new ArrayList<>(buildRequiredChapters(project));
+        String withKnownQuadro = "Texto com quadro válido [[@QUADRO:" + knownQuadroId + "]].";
+        chapters.set(0, buildChapter(project, ChapterType.INTRODUCTION, "Introdução", withKnownQuadro));
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId())).thenReturn(chapters);
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+
+        br.com.dwcore.acadflow_api.academictable.domain.AcademicTable knownQuadro =
+                br.com.dwcore.acadflow_api.academictable.domain.AcademicTable.builder()
+                        .id(knownQuadroId)
+                        .type(br.com.dwcore.acadflow_api.academictable.domain.AcademicTableType.QUADRO)
+                        .title("Quadro válido").content("| A |\n|---|\n| 1 |").build();
+        when(tableRepository.findByProjectIdOrderByCreatedAtAsc(project.getId()))
+                .thenReturn(List.of(knownQuadro));
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isTrue();
+        assertThat(status.pendingItems()).noneMatch(s -> s.contains("tabela/quadro inválido"));
+    }
+
+    @Test
+    void shouldNotBlockWhenTableExistsButHasNoMarkerInAnyChapter() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+
+        mockOwnership(user, project);
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId()))
+                .thenReturn(buildRequiredChapters(project)); // no table markers in content
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+
+        // A table is registered in the DB but referenced by no chapter
+        br.com.dwcore.acadflow_api.academictable.domain.AcademicTable unusedTable =
+                br.com.dwcore.acadflow_api.academictable.domain.AcademicTable.builder()
+                        .id(UUID.randomUUID())
+                        .type(br.com.dwcore.acadflow_api.academictable.domain.AcademicTableType.TABLE)
+                        .title("Tabela sem uso").content("| A |\n|---|\n| 1 |").build();
+        when(tableRepository.findByProjectIdOrderByCreatedAtAsc(project.getId()))
+                .thenReturn(List.of(unusedTable));
+
+        var status = exportService.getExportStatus(project.getId(), "docx", user.getEmail());
+
+        assertThat(status.ready()).isTrue();
+        assertThat(status.pendingItems()).noneMatch(s -> s.contains("tabela/quadro"));
     }
 }

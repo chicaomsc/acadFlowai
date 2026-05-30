@@ -12,6 +12,7 @@ export type TaskStatus = 'todo' | 'in_progress' | 'completed'
 export type ExportFormat = 'docx' | 'pdf' | 'slides'
 export type CitationType = 'indirect' | 'direct_short' | 'direct_long' | 'apud'
 export type CitationDisplayMode = 'parenthetical' | 'narrative'
+export type TabularElementKind = 'table' | 'quadro'
 
 export interface User {
   id: string
@@ -122,6 +123,17 @@ export interface Figure {
   widthPercent: 50 | 75 | 100
   createdAt?: Date
   imageUrl?: string
+}
+
+export interface TabularElement {
+  id: string
+  projectId: string
+  chapterId: string
+  kind: TabularElementKind
+  title: string
+  sourceText?: string
+  rows: string[][]
+  createdAt?: Date
 }
 
 export interface TimelineTask {

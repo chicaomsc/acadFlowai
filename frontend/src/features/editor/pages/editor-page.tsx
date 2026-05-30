@@ -7,7 +7,6 @@ import {
   CircleDashed,
   FileImage,
   FileSpreadsheet,
-  LayoutPanelTop,
   LoaderCircle,
   Link2,
   PanelRightClose,
@@ -23,11 +22,13 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { chapterCitationsQuery, projectCitationsQuery } from '@/features/editor/services/citations.service'
 import { chapterQuery, chaptersQuery, editorProjectQuery } from '@/features/editor/services/editor.service'
 import { chapterFiguresQuery, projectFiguresQuery } from '@/features/editor/services/figures.service'
+import { chapterTabularElementsQuery, projectTabularElementsQuery } from '@/features/editor/services/tables.service'
 import { referencesQuery } from '@/features/references/services/references.service'
 import { clearActiveProjectId, resolveValidActiveProjectId, setActiveProjectId } from '@/shared/services/active-project.service'
 import { createCitation, deleteCitation } from '@/shared/services/citation.service'
 import { createFigure, deleteFigure, getFigureImage } from '@/shared/services/figure.service'
 import { createReference } from '@/shared/services/reference.service'
+import { createTabularElement, deleteTabularElement } from '@/shared/services/table.service'
 import { projectsQuery } from '@/features/projects/services/projects.service'
 import { updateChapterContent } from '@/shared/services/chapter.service'
 import { isProjectNotFoundError, updateProject } from '@/shared/services/project.service'
@@ -59,7 +60,7 @@ import {
 } from '@/shared/ui/select'
 import { Textarea } from '@/shared/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
-import type { Chapter, Citation, CitationDisplayMode, CitationType, Figure, Reference } from '@/shared/types/contracts'
+import type { Chapter, Citation, CitationDisplayMode, CitationType, Figure, Reference, TabularElement, TabularElementKind } from '@/shared/types/contracts'
 
 const responses: Record<string, string> = {
   improve:
@@ -81,7 +82,7 @@ const chapterTargets = {
 } as const
 
 type DocumentStatus = 'completed' | 'writing' | 'pending'
-type ProjectNodeId = 'abstractPt' | 'abstractEn' | 'references' | 'figures'
+type ProjectNodeId = 'abstractPt' | 'abstractEn' | 'references' | 'figures' | 'tables' | 'quadros'
 type EditorNodeId = ProjectNodeId | `chapter:${string}`
 type CitationFormState = {
   referenceId: string
@@ -97,12 +98,24 @@ type ChapterEditorHandle = {
   focusAtOffset: (offset: number) => void
   insertCitation: (citationId: string, citation?: Citation) => string
   insertFigure: (figureId: string, figure?: Figure) => { value: string; caretOffset: number }
+  insertTabularElement: (itemId: string, kind: TabularElementKind, item?: TabularElement) => { value: string; caretOffset: number }
 }
 type FigureFormState = {
   file: File | null
   caption: string
   sourceText: string
   widthPercent: Figure['widthPercent']
+}
+type TabularElementFormState = {
+  kind: TabularElementKind
+  title: string
+  sourceText: string
+  rows: string[][]
+}
+type TabularValidationResult = {
+  valid: boolean
+  invalidCells: Array<{ rowIndex: number; columnIndex: number }>
+  message?: string
 }
 type QuickReferenceFormState = {
   type: 'article' | 'book' | 'website'
@@ -115,6 +128,8 @@ type QuickReferenceFormState = {
 
 const CITE_MARKER_REGEX = /\[\[@CITE:([^\]]+)\]\]/g
 const FIG_MARKER_REGEX = /\[\[@FIG:([^\]]+)\]\]/g
+const TABLE_MARKER_REGEX = /\[\[@TABLE:([^\]]+)\]\]/g
+const QUADRO_MARKER_REGEX = /\[\[@QUADRO:([^\]]+)\]\]/g
 const defaultCitationFormState: CitationFormState = {
   referenceId: '',
   type: 'indirect',
@@ -130,6 +145,16 @@ const defaultFigureFormState: FigureFormState = {
   sourceText: '',
   widthPercent: 100,
 }
+const defaultTabularRows = () => [
+  ['Cabeçalho 1', 'Cabeçalho 2'],
+  ['', ''],
+]
+const defaultTabularElementFormState = (kind: TabularElementKind = 'table'): TabularElementFormState => ({
+  kind,
+  title: '',
+  sourceText: '',
+  rows: defaultTabularRows(),
+})
 
 const citationTypeOptions: Array<{ value: CitationType; label: string; helper: string }> = [
   { value: 'indirect', label: 'Indireta', helper: 'Paráfrase com base na obra escolhida.' },
@@ -159,6 +184,8 @@ function getRouteNodeFromEditorNode(nodeId: EditorNodeId): string {
   if (nodeId === 'abstractEn') return 'abstract'
   if (nodeId === 'references') return 'references'
   if (nodeId === 'figures') return 'figures'
+  if (nodeId === 'tables') return 'tables'
+  if (nodeId === 'quadros') return 'quadros'
   return getChapterIdFromNode(nodeId) ?? ''
 }
 
@@ -171,6 +198,8 @@ function getEditorNodeFromRouteNode(
   if (routeNode === 'abstract') return 'abstractEn'
   if (routeNode === 'references') return 'references'
   if (routeNode === 'figures') return 'figures'
+  if (routeNode === 'tables') return 'tables'
+  if (routeNode === 'quadros') return 'quadros'
   if (availableChapterIds.includes(routeNode)) return `chapter:${routeNode}`
   return null
 }
@@ -181,6 +210,18 @@ function buildCitationMarker(citationId: string) {
 
 function buildFigureMarker(figureId: string) {
   return `[[@FIG:${figureId}]]`
+}
+
+function buildTableMarker(itemId: string) {
+  return `[[@TABLE:${itemId}]]`
+}
+
+function buildQuadroMarker(itemId: string) {
+  return `[[@QUADRO:${itemId}]]`
+}
+
+function buildTabularMarker(kind: TabularElementKind, itemId: string) {
+  return kind === 'table' ? buildTableMarker(itemId) : buildQuadroMarker(itemId)
 }
 
 function escapeRegExp(value: string) {
@@ -258,6 +299,57 @@ function buildFigurePreviewLabel(figure?: Figure) {
   return `Figura – ${figure.caption}`
 }
 
+function buildTabularElementPreviewLabel(item?: TabularElement) {
+  if (!item) return 'Elemento inválido ou removido'
+  return `${item.kind === 'table' ? 'Tabela' : 'Quadro'} – ${item.title}`
+}
+
+function getInvalidTabularFallbackLabel(kind: TabularElementKind) {
+  return kind === 'table' ? 'Tabela removida ou inválida' : 'Quadro removido ou inválido'
+}
+
+export function validateTabularElementForm(rows: string[][]): TabularValidationResult {
+  if (!rows.length || !rows[0]?.length) {
+    return {
+      valid: false,
+      invalidCells: [],
+      message: 'Preencha os cabeçalhos e pelo menos uma linha com conteúdo.',
+    }
+  }
+
+  const invalidCells: Array<{ rowIndex: number; columnIndex: number }> = []
+  const headers = rows[0]
+  headers.forEach((cell, columnIndex) => {
+    if (!cell.trim()) {
+      invalidCells.push({ rowIndex: 0, columnIndex })
+    }
+  })
+
+  const dataRows = rows.slice(1)
+  const hasDataRow = dataRows.length > 0
+  const hasAtLeastOneFilledDataCell = dataRows.some((row) => row.some((cell) => cell.trim().length > 0))
+
+  if (!hasDataRow || !hasAtLeastOneFilledDataCell) {
+    dataRows.forEach((row, rowIndex) => {
+      row.forEach((cell, columnIndex) => {
+        if (!cell.trim()) {
+          invalidCells.push({ rowIndex: rowIndex + 1, columnIndex })
+        }
+      })
+    })
+  }
+
+  if (invalidCells.length > 0 || !hasDataRow || !hasAtLeastOneFilledDataCell) {
+    return {
+      valid: false,
+      invalidCells,
+      message: 'Preencha os cabeçalhos e pelo menos uma linha com conteúdo.',
+    }
+  }
+
+  return { valid: true, invalidCells: [] }
+}
+
 function isResolvedFigurePreviewUrl(url?: string) {
   return Boolean(url && (url.startsWith('blob:') || url.startsWith('data:')))
 }
@@ -292,12 +384,26 @@ function replaceFigureMarkers(content: string, figuresMap: Map<string, Figure>) 
   return content.replace(FIG_MARKER_REGEX, (_, figureId: string) => `[${buildFigurePreviewLabel(figuresMap.get(figureId))}]`)
 }
 
+function replaceTabularMarkers(content: string, tabularElementsMap: Map<string, TabularElement>) {
+  return content
+    .replace(TABLE_MARKER_REGEX, (_, itemId: string) => `[${buildTabularElementPreviewLabel(tabularElementsMap.get(itemId))}]`)
+    .replace(QUADRO_MARKER_REGEX, (_, itemId: string) => `[${buildTabularElementPreviewLabel(tabularElementsMap.get(itemId))}]`)
+}
+
 export function extractCitationIds(content: string) {
   return Array.from(content.matchAll(CITE_MARKER_REGEX), (match) => match[1])
 }
 
 export function extractFigureIds(content: string) {
   return Array.from(content.matchAll(FIG_MARKER_REGEX), (match) => match[1])
+}
+
+export function extractTableIds(content: string) {
+  return Array.from(content.matchAll(TABLE_MARKER_REGEX), (match) => match[1])
+}
+
+export function extractQuadroIds(content: string) {
+  return Array.from(content.matchAll(QUADRO_MARKER_REGEX), (match) => match[1])
 }
 
 function getCitationChipLabel(citation?: Citation) {
@@ -332,6 +438,54 @@ function buildFigureSourceLabel(figure?: Figure) {
 
 function buildFigurePreviewWidthValue(figure?: Figure) {
   return `${figure?.widthPercent ?? 100}%`
+}
+
+function getTabularElementLabel(item?: TabularElement, elementNumber?: number, fallbackKind: TabularElementKind = 'table') {
+  if (!item) return getInvalidTabularFallbackLabel(fallbackKind)
+  const noun = item.kind === 'table' ? 'Tabela' : 'Quadro'
+  return `${noun} ${elementNumber ?? 1} – ${item.title}`
+}
+
+function getTabularElementTooltip(itemId: string, item?: TabularElement, fallbackKind: TabularElementKind = 'table') {
+  if (!item) {
+    return `Marcador ${fallbackKind === 'table' ? buildTableMarker(itemId) : buildQuadroMarker(itemId)} não encontrado na lista do projeto.`
+  }
+
+  const sourceLabel = item.sourceText?.trim() ? ` • ${item.sourceText.trim()}` : ''
+  return `${getTabularElementLabel(item)}${sourceLabel}`
+}
+
+function buildTabularSourceLabel(item?: TabularElement) {
+  if (!item) return 'Fonte: não disponível.'
+  return item.sourceText?.trim() ? `Fonte: ${item.sourceText.trim()}` : 'Fonte: não informada.'
+}
+
+function createTabularPreviewTable(doc: Document, item?: TabularElement, fallbackKind: TabularElementKind = 'table') {
+  const table = doc.createElement('table')
+  table.className = (item?.kind ?? fallbackKind) === 'quadro'
+    ? 'w-full border-collapse text-left text-[14px] leading-6 text-foreground'
+    : 'w-full border-separate border-spacing-0 text-left text-[14px] leading-6 text-foreground'
+
+  const body = doc.createElement('tbody')
+  const rows = item?.rows?.length ? item.rows : [[getInvalidTabularFallbackLabel(fallbackKind)]]
+
+  rows.forEach((row, rowIndex) => {
+    const tr = doc.createElement('tr')
+    row.forEach((cellValue) => {
+      const cell = doc.createElement(rowIndex === 0 ? 'th' : 'td')
+      cell.className = (item?.kind ?? fallbackKind) === 'quadro'
+        ? 'border border-slate-300 px-3 py-2 align-top'
+        : rowIndex === 0
+          ? 'border-b border-slate-300 px-3 py-2 align-top font-semibold'
+          : 'border-b border-slate-200 px-3 py-2 align-top'
+      cell.textContent = cellValue || '—'
+      tr.append(cell)
+    })
+    body.append(tr)
+  })
+
+  table.append(body)
+  return table
 }
 
 function createFigurePreviewFallback(doc: Document, message: string) {
@@ -405,15 +559,59 @@ function createFigureChipNode(doc: Document, figureId: string, figure?: Figure, 
   return wrapper
 }
 
-const INLINE_MARKER_REGEX = /\[\[@(CITE|FIG):([^\]]+)\]\]/g
+function createTabularElementNode(
+  doc: Document,
+  itemId: string,
+  item?: TabularElement,
+  elementNumber?: number,
+  fallbackKind: TabularElementKind = 'table',
+) {
+  const wrapper = doc.createElement('figure')
+  if ((item?.kind ?? fallbackKind) === 'quadro') {
+    wrapper.dataset.quadroId = itemId
+  } else {
+    wrapper.dataset.tableId = itemId
+  }
+  wrapper.contentEditable = 'false'
+  wrapper.className = 'my-8 block w-full text-center'
+  wrapper.title = getTabularElementTooltip(itemId, item, fallbackKind)
+  wrapper.setAttribute('aria-label', getTabularElementTooltip(itemId, item, fallbackKind))
+  wrapper.setAttribute('tabindex', '0')
+
+  const frame = doc.createElement('div')
+  frame.className = 'mx-auto flex w-full max-w-[860px] flex-col items-center gap-3'
+
+  const caption = doc.createElement('figcaption')
+  caption.className = item
+    ? 'text-[15px] font-medium leading-7 text-foreground'
+    : 'text-[15px] font-medium leading-7 text-amber-900'
+  caption.textContent = getTabularElementLabel(item, elementNumber, fallbackKind)
+
+  const tableWrapper = doc.createElement('div')
+  tableWrapper.className = 'w-full overflow-x-auto'
+  tableWrapper.append(createTabularPreviewTable(doc, item, fallbackKind))
+
+  const source = doc.createElement('p')
+  source.className = 'text-[13px] leading-6 text-muted-foreground'
+  source.textContent = buildTabularSourceLabel(item)
+
+  frame.append(caption, tableWrapper, source)
+  wrapper.append(frame)
+  return wrapper
+}
+
+const INLINE_MARKER_REGEX = /\[\[@(CITE|FIG|TABLE|QUADRO):([^\]]+)\]\]/g
 function appendContentWithInlineMarkers(
   root: HTMLElement,
   content: string,
   citationsMap: Map<string, Citation>,
   figuresMap: Map<string, Figure>,
+  tabularElementsMap: Map<string, TabularElement>,
 ) {
   let lastIndex = 0
   let figureNumber = 0
+  let tableNumber = 0
+  let quadroNumber = 0
 
   content.replace(INLINE_MARKER_REGEX, (match, markerType: string, markerId: string, offset: number) => {
     if (offset > lastIndex) {
@@ -422,9 +620,15 @@ function appendContentWithInlineMarkers(
 
     if (markerType === 'CITE') {
       root.append(createCitationChipNode(root.ownerDocument, markerId, citationsMap.get(markerId)))
-    } else {
+    } else if (markerType === 'FIG') {
       figureNumber += 1
       root.append(createFigureChipNode(root.ownerDocument, markerId, figuresMap.get(markerId), figureNumber))
+    } else if (markerType === 'TABLE') {
+      tableNumber += 1
+      root.append(createTabularElementNode(root.ownerDocument, markerId, tabularElementsMap.get(markerId), tableNumber, 'table'))
+    } else {
+      quadroNumber += 1
+      root.append(createTabularElementNode(root.ownerDocument, markerId, tabularElementsMap.get(markerId), quadroNumber, 'quadro'))
     }
 
     lastIndex = offset + match.length
@@ -436,9 +640,15 @@ function appendContentWithInlineMarkers(
   }
 }
 
-function renderContentEditableValue(root: HTMLElement, content: string, citationsMap: Map<string, Citation>, figuresMap: Map<string, Figure>) {
+function renderContentEditableValue(
+  root: HTMLElement,
+  content: string,
+  citationsMap: Map<string, Citation>,
+  figuresMap: Map<string, Figure>,
+  tabularElementsMap: Map<string, TabularElement>,
+) {
   root.replaceChildren()
-  appendContentWithInlineMarkers(root, content, citationsMap, figuresMap)
+  appendContentWithInlineMarkers(root, content, citationsMap, figuresMap, tabularElementsMap)
 }
 
 function serializeEditorNode(node: Node): string {
@@ -456,6 +666,14 @@ function serializeEditorNode(node: Node): string {
 
   if (node.dataset.figureId) {
     return buildFigureMarker(node.dataset.figureId)
+  }
+
+  if (node.dataset.tableId) {
+    return buildTableMarker(node.dataset.tableId)
+  }
+
+  if (node.dataset.quadroId) {
+    return buildQuadroMarker(node.dataset.quadroId)
   }
 
   if (node.tagName === 'BR') {
@@ -491,7 +709,7 @@ function getSerializedOffset(root: HTMLElement, container: Node, offset: number)
       if (node.nodeType === Node.TEXT_NODE) {
         serializedOffset += offset
       } else if (node instanceof HTMLElement) {
-        if (node.dataset.citationId || node.dataset.figureId) {
+        if (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId) {
           serializedOffset += offset > 0 ? getSerializedNodeLength(node) : 0
         } else if (node.tagName === 'BR') {
           serializedOffset += Math.min(offset, 1)
@@ -515,7 +733,7 @@ function getSerializedOffset(root: HTMLElement, container: Node, offset: number)
       return false
     }
 
-    if (node.dataset.citationId || node.dataset.figureId) {
+    if (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId) {
       serializedOffset += getSerializedNodeLength(node)
       return false
     }
@@ -582,7 +800,7 @@ function placeCaretAtSerializedOffset(root: HTMLElement, targetOffset: number) {
       return
     }
 
-    if (node instanceof HTMLElement && (node.dataset.citationId || node.dataset.figureId)) {
+    if (node instanceof HTMLElement && (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId)) {
       if (remainingOffset === 0) {
         range.setStartBefore(node)
       } else {
@@ -604,7 +822,7 @@ function placeCaretAtSerializedOffset(root: HTMLElement, targetOffset: number) {
   placeCaretAtEnd(root)
 }
 
-function buildFigureInsertionContent(content: string, startOffset: number, endOffset: number, marker: string) {
+function buildBlockInsertionContent(content: string, startOffset: number, endOffset: number, marker: string) {
   const normalizedStart = Math.max(0, Math.min(startOffset, content.length))
   const normalizedEnd = Math.max(normalizedStart, Math.min(endOffset, content.length))
   const before = content.slice(0, normalizedStart)
@@ -646,6 +864,12 @@ function removeCitationMarker(content: string, citationId: string) {
 
 function removeFigureMarker(content: string, figureId: string) {
   const markerRegex = new RegExp(escapeRegExp(buildFigureMarker(figureId)), 'g')
+  return content.replace(markerRegex, '')
+}
+
+function removeTabularMarker(content: string, item: Pick<TabularElement, 'id' | 'kind'>) {
+  const marker = item.kind === 'table' ? buildTableMarker(item.id) : buildQuadroMarker(item.id)
+  const markerRegex = new RegExp(escapeRegExp(marker), 'g')
   return content.replace(markerRegex, '')
 }
 
@@ -836,6 +1060,7 @@ async function invalidateEditorQueries(queryClient: ReturnType<typeof useQueryCl
     queryClient.invalidateQueries({ queryKey: ['references'] }),
     queryClient.invalidateQueries({ queryKey: ['citations', 'project', projectId] }),
     queryClient.invalidateQueries({ queryKey: ['figures', 'project', projectId] }),
+    queryClient.invalidateQueries({ queryKey: ['tabular-elements', 'project', projectId] }),
     queryClient.invalidateQueries({ queryKey: ['timeline'] }),
     queryClient.invalidateQueries({ queryKey: ['ai-suggestions'] }),
     queryClient.invalidateQueries({ queryKey: ['export-status'] }),
@@ -844,9 +1069,44 @@ async function invalidateEditorQueries(queryClient: ReturnType<typeof useQueryCl
           queryClient.invalidateQueries({ queryKey: ['chapter', chapterId] }),
           queryClient.invalidateQueries({ queryKey: ['citations', 'chapter', chapterId] }),
           queryClient.invalidateQueries({ queryKey: ['figures', 'chapter', chapterId] }),
+          queryClient.invalidateQueries({ queryKey: ['tabular-elements', 'chapter', chapterId] }),
         ])
       : Promise.resolve(),
   ])
+}
+
+function upsertTabularElementInCache(
+  current: TabularElement[] | undefined,
+  createdItem: TabularElement,
+  scope: 'project' | 'chapter',
+  chapterId: string,
+) {
+  const nextItems = current ?? []
+  const filteredItems = nextItems.filter((item) => item.id !== createdItem.id)
+
+  if (scope === 'chapter') {
+    return [...filteredItems.filter((item) => item.chapterId === chapterId), createdItem]
+  }
+
+  return [...filteredItems, createdItem]
+}
+
+function mergeTabularElementsWithOptimistic(
+  current: TabularElement[] | undefined,
+  optimisticItems: Record<string, TabularElement>,
+  scope: 'project' | 'chapter',
+  chapterId: string | null,
+) {
+  const scopedOptimisticItems = Object.values(optimisticItems).filter((item) => (
+    scope === 'project'
+      ? true
+      : item.chapterId === chapterId
+  ))
+
+  return scopedOptimisticItems.reduce<TabularElement[]>(
+    (items, optimisticItem) => upsertTabularElementInCache(items, optimisticItem, scope, chapterId ?? optimisticItem.chapterId),
+    current ?? [],
+  )
 }
 
 export function EditorPage() {
@@ -857,6 +1117,7 @@ export function EditorPage() {
   const referencesListQuery = useQuery(referencesQuery(projectId))
   const projectCitationsListQuery = useQuery(projectCitationsQuery(projectId))
   const projectFiguresListQuery = useQuery(projectFiguresQuery(projectId))
+  const projectTabularElementsListQuery = useQuery(projectTabularElementsQuery(projectId))
   const { data: projects = [], isLoading: projectsLoading } = useQuery(projectsQuery)
   const queryClient = useQueryClient()
   const [selectedNodeId, setSelectedNodeId] = useState<EditorNodeId | null>(null)
@@ -878,12 +1139,19 @@ export function EditorPage() {
   const [figureFeedback, setFigureFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
   const [figureSaving, setFigureSaving] = useState(false)
   const [figurePreviewUrls, setFigurePreviewUrls] = useState<Record<string, string>>({})
+  const [tabularElementDialogOpen, setTabularElementDialogOpen] = useState(false)
+  const [tabularElementForm, setTabularElementForm] = useState<TabularElementFormState>(defaultTabularElementFormState())
+  const [tabularElementFeedback, setTabularElementFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
+  const [tabularElementSaving, setTabularElementSaving] = useState(false)
+  const [tabularValidationState, setTabularValidationState] = useState<TabularValidationResult>({ valid: true, invalidCells: [] })
+  const [optimisticTabularElements, setOptimisticTabularElements] = useState<Record<string, TabularElement>>({})
   const [quickReferenceDialogOpen, setQuickReferenceDialogOpen] = useState(false)
   const [quickReferenceForm, setQuickReferenceForm] = useState<QuickReferenceFormState>(quickReferenceDefaultFormState)
   const [quickReferenceSaving, setQuickReferenceSaving] = useState(false)
   const [quickReferenceFeedback, setQuickReferenceFeedback] = useState<string | null>(null)
   const [deletingCitationId, setDeletingCitationId] = useState<string | null>(null)
   const [deletingFigureId, setDeletingFigureId] = useState<string | null>(null)
+  const [deletingTabularElementId, setDeletingTabularElementId] = useState<string | null>(null)
   const lastSavedContentRef = useRef('')
   const latestContentRef = useRef('')
   const hydratedChapterIdRef = useRef<string | null>(null)
@@ -902,6 +1170,7 @@ export function EditorPage() {
   const selectedChapterQuery = useQuery(chapterQuery(selectedChapterId))
   const chapterCitationsListQuery = useQuery(chapterCitationsQuery(selectedChapterId))
   const chapterFiguresListQuery = useQuery(chapterFiguresQuery(selectedChapterId, projectId))
+  const chapterTabularElementsListQuery = useQuery(chapterTabularElementsQuery(selectedChapterId, projectId))
   const previousProjectIdRef = useRef<string | null>(null)
 
   const selectedChapter = useMemo(
@@ -912,6 +1181,24 @@ export function EditorPage() {
   const projectCitations = projectCitationsListQuery.data ?? []
   const chapterFigures = chapterFiguresListQuery.data ?? []
   const projectFigures = projectFiguresListQuery.data ?? []
+  const chapterTabularElements = useMemo(
+    () => mergeTabularElementsWithOptimistic(
+      chapterTabularElementsListQuery.data,
+      optimisticTabularElements,
+      'chapter',
+      selectedChapterId,
+    ),
+    [chapterTabularElementsListQuery.data, optimisticTabularElements, selectedChapterId],
+  )
+  const projectTabularElements = useMemo(
+    () => mergeTabularElementsWithOptimistic(
+      projectTabularElementsListQuery.data,
+      optimisticTabularElements,
+      'project',
+      selectedChapterId,
+    ),
+    [optimisticTabularElements, projectTabularElementsListQuery.data, selectedChapterId],
+  )
   const referencesMap = useMemo(
     () => new Map((referencesListQuery.data ?? []).map((reference) => [reference.id, reference])),
     [referencesListQuery.data],
@@ -939,12 +1226,24 @@ export function EditorPage() {
     ])),
     [figurePreviewUrls, projectFigures],
   )
+  const tabularElementsMap = useMemo(
+    () => new Map(projectTabularElements.map((item) => [item.id, item])),
+    [projectTabularElements],
+  )
   const contentCitationIds = useMemo(
     () => extractCitationIds(content),
     [content],
   )
   const contentFigureIds = useMemo(
     () => extractFigureIds(content),
+    [content],
+  )
+  const contentTableIds = useMemo(
+    () => extractTableIds(content),
+    [content],
+  )
+  const contentQuadroIds = useMemo(
+    () => extractQuadroIds(content),
     [content],
   )
   const invalidCitationCount = useMemo(
@@ -955,6 +1254,10 @@ export function EditorPage() {
     () => contentFigureIds.filter((figureId) => !figuresMap.has(figureId)).length,
     [contentFigureIds, figuresMap],
   )
+  const invalidTabularElementCount = useMemo(
+    () => [...contentTableIds, ...contentQuadroIds].filter((itemId) => !tabularElementsMap.has(itemId)).length,
+    [contentQuadroIds, contentTableIds, tabularElementsMap],
+  )
   const chapterCitationIdsInText = useMemo(
     () => new Set(contentCitationIds),
     [contentCitationIds],
@@ -962,6 +1265,14 @@ export function EditorPage() {
   const chapterFigureIdsInText = useMemo(
     () => new Set(contentFigureIds),
     [contentFigureIds],
+  )
+  const chapterTableIdsInText = useMemo(
+    () => new Set(contentTableIds),
+    [contentTableIds],
+  )
+  const chapterQuadroIdsInText = useMemo(
+    () => new Set(contentQuadroIds),
+    [contentQuadroIds],
   )
   const projectChapterContents = useMemo(
     () => chapters.map((chapter) => (
@@ -977,6 +1288,14 @@ export function EditorPage() {
   )
   const projectFigureIdsInText = useMemo(
     () => new Set(projectChapterContents.flatMap((chapter) => extractFigureIds(chapter.content ?? ''))),
+    [projectChapterContents],
+  )
+  const projectTableIdsInText = useMemo(
+    () => new Set(projectChapterContents.flatMap((chapter) => extractTableIds(chapter.content ?? ''))),
+    [projectChapterContents],
+  )
+  const projectQuadroIdsInText = useMemo(
+    () => new Set(projectChapterContents.flatMap((chapter) => extractQuadroIds(chapter.content ?? ''))),
     [projectChapterContents],
   )
   const chapterCitationsInText = useMemo(
@@ -1003,6 +1322,24 @@ export function EditorPage() {
     () => projectFigures.filter((figure) => projectFigureIdsInText.has(figure.id)),
     [projectFigureIdsInText, projectFigures],
   )
+  const chapterTabularElementsInText = useMemo(
+    () => chapterTabularElements.filter((item) => (
+      item.kind === 'table' ? chapterTableIdsInText.has(item.id) : chapterQuadroIdsInText.has(item.id)
+    )),
+    [chapterQuadroIdsInText, chapterTableIdsInText, chapterTabularElements],
+  )
+  const chapterUnusedTabularElements = useMemo(
+    () => chapterTabularElements.filter((item) => (
+      item.kind === 'table' ? !chapterTableIdsInText.has(item.id) : !chapterQuadroIdsInText.has(item.id)
+    )),
+    [chapterQuadroIdsInText, chapterTableIdsInText, chapterTabularElements],
+  )
+  const projectTabularElementsInText = useMemo(
+    () => projectTabularElements.filter((item) => (
+      item.kind === 'table' ? projectTableIdsInText.has(item.id) : projectQuadroIdsInText.has(item.id)
+    )),
+    [projectQuadroIdsInText, projectTableIdsInText, projectTabularElements],
+  )
   const citedReferenceIds = useMemo(
     () => new Set(projectCitationsInText.map((citation) => citation.referenceId)),
     [projectCitationsInText],
@@ -1025,6 +1362,40 @@ export function EditorPage() {
       return ordered
     },
     [figuresMap, projectChapterContents],
+  )
+  const tablesInReadingOrder = useMemo(
+    () => {
+      const ordered: TabularElement[] = []
+      projectChapterContents.forEach((chapter) => {
+        extractTableIds(chapter.content ?? '').forEach((itemId) => {
+          const item = tabularElementsMap.get(itemId)
+          if (item && item.kind === 'table' && !ordered.some((entry) => entry.id === item.id)) {
+            ordered.push(item)
+          }
+        })
+      })
+      return ordered
+    },
+    [projectChapterContents, tabularElementsMap],
+  )
+  const quadrosInReadingOrder = useMemo(
+    () => {
+      const ordered: TabularElement[] = []
+      projectChapterContents.forEach((chapter) => {
+        extractQuadroIds(chapter.content ?? '').forEach((itemId) => {
+          const item = tabularElementsMap.get(itemId)
+          if (item && item.kind === 'quadro' && !ordered.some((entry) => entry.id === item.id)) {
+            ordered.push(item)
+          }
+        })
+      })
+      return ordered
+    },
+    [projectChapterContents, tabularElementsMap],
+  )
+  const currentTabularValidation = useMemo(
+    () => validateTabularElementForm(tabularElementForm.rows),
+    [tabularElementForm.rows],
   )
 
   useEffect(() => {
@@ -1125,6 +1496,10 @@ export function EditorPage() {
     const projectChanged = previousProjectIdRef.current !== projectId
     const routeNode = getEditorNodeFromRouteNode(routeNodeId, textualChapterIds)
 
+    if (projectChanged) {
+      setOptimisticTabularElements({})
+    }
+
     if (routeNodeId) {
       if (routeNode) {
         if (selectedNodeId !== routeNode) {
@@ -1168,6 +1543,9 @@ export function EditorPage() {
       setCitationDialogOpen(false)
       setFigureFeedback(null)
       setFigureDialogOpen(false)
+      setTabularElementFeedback(null)
+      setTabularElementDialogOpen(false)
+      setTabularValidationState({ valid: true, invalidCells: [] })
       setQuickReferenceDialogOpen(false)
     }
   }, [selectedChapter])
@@ -1288,7 +1666,10 @@ export function EditorPage() {
   const isChapterView = isChapterNode(activeNodeId)
   const abstractPtWords = countWords(abstractPtDraft)
   const abstractEnWords = countWords(abstractEnDraft)
-  const displayContent = replaceFigureMarkers(replaceCitationMarkers(content, citationsMap), figuresMap)
+  const displayContent = replaceTabularMarkers(
+    replaceFigureMarkers(replaceCitationMarkers(content, citationsMap), figuresMap),
+    tabularElementsMap,
+  )
   const chapterWordCount = countWords(displayContent)
   const selectedWordCount = isChapterView ? chapterWordCount : activeNodeId === 'abstractPt' ? abstractPtWords : activeNodeId === 'abstractEn' ? abstractEnWords : 0
   const targetWords = getChapterTargetWords(selectedChapter)
@@ -1306,17 +1687,19 @@ export function EditorPage() {
   const abstractEnStatus = normalizeTextStatus(abstractEnWords, 100)
   const referencesStatus: DocumentStatus = citedReferences.length > 0 ? 'completed' : 'pending'
   const figuresStatus: DocumentStatus = figuresInReadingOrder.length > 0 ? 'completed' : 'pending'
+  const tablesStatus: DocumentStatus = tablesInReadingOrder.length > 0 ? 'completed' : 'pending'
+  const quadrosStatus: DocumentStatus = quadrosInReadingOrder.length > 0 ? 'completed' : 'pending'
   const textualStatuses = textualChapters.map((chapter) => normalizeChapterStatus(chapter))
 
   const groupCounters = {
     pre: [abstractPtStatus, abstractEnStatus],
     text: textualStatuses,
-    post: [referencesStatus, figuresStatus],
+    post: [figuresStatus, tablesStatus, quadrosStatus, referencesStatus],
   }
 
   const selectedGroup = activeNodeId === 'abstractPt' || activeNodeId === 'abstractEn'
     ? 'Pré-textuais'
-    : activeNodeId === 'references' || activeNodeId === 'figures'
+    : activeNodeId === 'references' || activeNodeId === 'figures' || activeNodeId === 'tables' || activeNodeId === 'quadros'
       ? 'Pós-textuais'
       : 'Textuais'
   const selectedLabel = activeNodeId === 'abstractPt'
@@ -1327,7 +1710,11 @@ export function EditorPage() {
         ? 'Referências'
         : activeNodeId === 'figures'
           ? 'Lista de figuras'
-        : selectedChapter?.title ?? 'Capítulo'
+          : activeNodeId === 'tables'
+            ? 'Lista de tabelas'
+            : activeNodeId === 'quadros'
+              ? 'Lista de quadros'
+          : selectedChapter?.title ?? 'Capítulo'
   const selectedStatus = activeNodeId === 'abstractPt'
       ? abstractPtStatus
       : activeNodeId === 'abstractEn'
@@ -1336,6 +1723,10 @@ export function EditorPage() {
           ? referencesStatus
           : activeNodeId === 'figures'
             ? figuresStatus
+            : activeNodeId === 'tables'
+              ? tablesStatus
+              : activeNodeId === 'quadros'
+                ? quadrosStatus
           : normalizeChapterStatus(selectedChapter ?? textualChapters[0])
   const selectedSummaryLabel = getDocumentSummaryLabel(activeNodeId, selectedStatus, isChapterView)
   const editorBodyWidth = getEditorBodyWidth(isChapterView, aiOpen)
@@ -1465,6 +1856,57 @@ export function EditorPage() {
 
   function updateQuickReferenceForm<K extends keyof QuickReferenceFormState>(field: K, value: QuickReferenceFormState[K]) {
     setQuickReferenceForm((current) => ({ ...current, [field]: value }))
+  }
+
+  function updateTabularElementForm<K extends keyof TabularElementFormState>(field: K, value: TabularElementFormState[K]) {
+    setTabularElementForm((current) => ({ ...current, [field]: value }))
+  }
+
+  function updateTabularCell(rowIndex: number, columnIndex: number, value: string) {
+    setTabularElementForm((current) => {
+      const nextRows = current.rows.map((row, currentRowIndex) => (
+        currentRowIndex === rowIndex
+          ? row.map((cell, currentColumnIndex) => (currentColumnIndex === columnIndex ? value : cell))
+          : row
+      ))
+      setTabularValidationState(validateTabularElementForm(nextRows))
+      return {
+        ...current,
+        rows: nextRows,
+      }
+    })
+  }
+
+  function addTabularRow() {
+    setTabularElementForm((current) => {
+      const nextRows = [...current.rows, new Array(current.rows[0]?.length ?? 2).fill('')]
+      setTabularValidationState(validateTabularElementForm(nextRows))
+      return { ...current, rows: nextRows }
+    })
+  }
+
+  function addTabularColumn() {
+    setTabularElementForm((current) => {
+      const nextRows = current.rows.map((row) => [...row, ''])
+      setTabularValidationState(validateTabularElementForm(nextRows))
+      return { ...current, rows: nextRows }
+    })
+  }
+
+  function removeTabularRow() {
+    setTabularElementForm((current) => {
+      const nextRows = current.rows.length > 1 ? current.rows.slice(0, -1) : current.rows
+      setTabularValidationState(validateTabularElementForm(nextRows))
+      return { ...current, rows: nextRows }
+    })
+  }
+
+  function removeTabularColumn() {
+    setTabularElementForm((current) => {
+      const nextRows = current.rows[0]?.length > 1 ? current.rows.map((row) => row.slice(0, -1)) : current.rows
+      setTabularValidationState(validateTabularElementForm(nextRows))
+      return { ...current, rows: nextRows }
+    })
   }
 
   function handleReferenceSelectChange(value: string) {
@@ -1605,6 +2047,72 @@ export function EditorPage() {
     }
   }
 
+  async function handleCreateTabularElement() {
+    if (!selectedChapter) return
+
+    if (!tabularElementForm.title.trim()) {
+      setTabularElementFeedback({
+        tone: 'error',
+        message: `Informe o título ${tabularElementForm.kind === 'table' ? 'da tabela' : 'do quadro'} para continuar.`,
+      })
+      return
+    }
+
+    const validation = validateTabularElementForm(tabularElementForm.rows)
+    setTabularValidationState(validation)
+    if (!validation.valid) {
+      setTabularElementFeedback({
+        tone: 'error',
+        message: validation.message ?? 'Preencha os cabeçalhos e pelo menos uma linha com conteúdo.',
+      })
+      return
+    }
+
+    setTabularElementSaving(true)
+    setTabularElementFeedback(null)
+
+    try {
+      const createdItem = await createTabularElement(projectId, {
+        chapterId: selectedChapter.id,
+        kind: tabularElementForm.kind,
+        title: tabularElementForm.title,
+        sourceText: tabularElementForm.sourceText,
+        rows: tabularElementForm.rows,
+      })
+
+      setOptimisticTabularElements((current) => ({ ...current, [createdItem.id]: createdItem }))
+      queryClient.setQueryData<TabularElement[]>(
+        ['tabular-elements', 'project', projectId],
+        (current) => upsertTabularElementInCache(current, createdItem, 'project', selectedChapter.id),
+      )
+      queryClient.setQueryData<TabularElement[]>(
+        ['tabular-elements', 'chapter', selectedChapter.id],
+        (current) => upsertTabularElementInCache(current, createdItem, 'chapter', selectedChapter.id),
+      )
+
+      const marker = buildTabularMarker(createdItem.kind, createdItem.id)
+      const insertionResult = chapterEditorRef.current?.insertTabularElement(createdItem.id, createdItem.kind, createdItem)
+      const nextContent = insertionResult?.value ?? `${latestContentRef.current}${marker}`
+      const nextCaretOffset = insertionResult?.caretOffset ?? nextContent.length
+
+      setContent(nextContent)
+      latestContentRef.current = nextContent
+      setTabularElementDialogOpen(false)
+      setTabularElementForm(defaultTabularElementFormState(tabularElementForm.kind))
+      setTabularValidationState({ valid: true, invalidCells: [] })
+      setTabularElementFeedback(null)
+      await invalidateEditorQueries(queryClient, projectId, selectedChapter.id)
+      focusEditorAtPosition(nextCaretOffset)
+    } catch (error) {
+      setTabularElementFeedback({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Não foi possível inserir este elemento agora.',
+      })
+    } finally {
+      setTabularElementSaving(false)
+    }
+  }
+
   async function handleCreateQuickReference() {
     const authors = quickReferenceForm.authors
       .split(';')
@@ -1712,6 +2220,38 @@ export function EditorPage() {
     }
   }
 
+  async function handleRemoveTabularElement(item: TabularElement) {
+    if (!selectedChapter) return
+
+    setDeletingTabularElementId(item.id)
+    setTabularElementFeedback(null)
+
+    try {
+      await deleteTabularElement(item)
+
+      const nextContent = removeTabularMarker(latestContentRef.current, item)
+      if (nextContent !== latestContentRef.current) {
+        setContent(nextContent)
+        latestContentRef.current = nextContent
+        lastSavedContentRef.current = nextContent
+        await updateChapterContent(selectedChapter.id, nextContent)
+      }
+
+      await invalidateEditorQueries(queryClient, projectId, selectedChapter.id)
+      setTabularElementFeedback({
+        tone: 'success',
+        message: `${item.kind === 'table' ? 'Tabela' : 'Quadro'} removid${item.kind === 'table' ? 'a' : 'o'} do capítulo e da lista.`,
+      })
+    } catch (error) {
+      setTabularElementFeedback({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Não foi possível remover o elemento selecionado.',
+      })
+    } finally {
+      setDeletingTabularElementId(null)
+    }
+  }
+
   return (
     <div className="flex h-[calc(100vh-72px)] min-h-[720px] bg-[radial-gradient(circle_at_top,rgba(24,53,104,0.05),transparent_36%),linear-gradient(180deg,rgba(255,255,255,0.42),rgba(255,255,255,0))]">
       <aside className="hidden h-full w-[292px] border-r border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(248,250,252,0.96))] shadow-[8px_0_32px_rgba(15,23,42,0.04)] backdrop-blur lg:flex lg:flex-col">
@@ -1762,18 +2302,32 @@ export function EditorPage() {
               counter={`${groupCounters.post.filter((status) => status === 'completed').length}/${groupCounters.post.length}`}
             >
               <DocumentNavItem
-                title="Referências"
-                helper={citedReferences.length > 0 ? `${citedReferences.length} referência(s) citada(s)` : 'Nenhuma referência citada ainda'}
-                active={activeNodeId === 'references'}
-                status={referencesStatus}
-                onClick={() => void handleSelectNode('references')}
-              />
-              <DocumentNavItem
                 title="Lista de figuras"
                 helper={figuresInReadingOrder.length > 0 ? `${figuresInReadingOrder.length} figura(s) usada(s)` : 'Nenhuma figura usada ainda'}
                 active={activeNodeId === 'figures'}
                 status={figuresStatus}
                 onClick={() => void handleSelectNode('figures')}
+              />
+              <DocumentNavItem
+                title="Lista de tabelas"
+                helper={tablesInReadingOrder.length > 0 ? `${tablesInReadingOrder.length} tabela(s) usada(s)` : 'Nenhuma tabela usada ainda'}
+                active={activeNodeId === 'tables'}
+                status={tablesStatus}
+                onClick={() => void handleSelectNode('tables')}
+              />
+              <DocumentNavItem
+                title="Lista de quadros"
+                helper={quadrosInReadingOrder.length > 0 ? `${quadrosInReadingOrder.length} quadro(s) usado(s)` : 'Nenhum quadro usado ainda'}
+                active={activeNodeId === 'quadros'}
+                status={quadrosStatus}
+                onClick={() => void handleSelectNode('quadros')}
+              />
+              <DocumentNavItem
+                title="Referências"
+                helper={citedReferences.length > 0 ? `${citedReferences.length} referência(s) citada(s)` : 'Nenhuma referência citada ainda'}
+                active={activeNodeId === 'references'}
+                status={referencesStatus}
+                onClick={() => void handleSelectNode('references')}
               />
             </DocumentSection>
           </div>
@@ -1958,6 +2512,78 @@ export function EditorPage() {
                 </SectionCard>
               ) : null}
 
+              {activeNodeId === 'tables' ? (
+                <SectionCard
+                  title="Lista de tabelas"
+                  description="Mostra somente tabelas efetivamente usadas nos capítulos, na ordem em que aparecem no texto."
+                >
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <ReferenceSummaryCard
+                      title="Tabelas usadas"
+                      value={`${tablesInReadingOrder.length} tabela(s)`}
+                      helper={tablesInReadingOrder.length > 0 ? 'A lista acompanha os marcadores [[@TABLE:id]] inseridos nos capítulos.' : 'As tabelas aparecem aqui automaticamente quando você insere marcadores nos capítulos.'}
+                    />
+                    <ReferenceSummaryCard
+                      title="Status do pós-textual"
+                      value={getStatusLabel(tablesStatus)}
+                      helper="A lista fica concluída quando existe ao menos uma tabela efetivamente usada no texto."
+                    />
+                  </div>
+                  {tablesInReadingOrder.length === 0 ? (
+                    <div className="mt-5 rounded-[24px] border border-dashed border-border/80 bg-muted/25 px-5 py-5">
+                      <p className="text-sm font-medium text-foreground">Nenhuma tabela utilizada no texto.</p>
+                    </div>
+                  ) : (
+                    <div className="mt-5 space-y-3">
+                      {tablesInReadingOrder.map((item, index) => (
+                        <div key={item.id} className="rounded-[24px] border border-border/70 bg-white/84 px-4 py-4">
+                          <p className="text-sm font-medium text-foreground">{`Tabela ${index + 1} – ${item.title}`}</p>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                            {item.sourceText?.trim() ? item.sourceText : 'Fonte não informada.'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SectionCard>
+              ) : null}
+
+              {activeNodeId === 'quadros' ? (
+                <SectionCard
+                  title="Lista de quadros"
+                  description="Mostra somente quadros efetivamente usados nos capítulos, na ordem em que aparecem no texto."
+                >
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <ReferenceSummaryCard
+                      title="Quadros usados"
+                      value={`${quadrosInReadingOrder.length} quadro(s)`}
+                      helper={quadrosInReadingOrder.length > 0 ? 'A lista acompanha os marcadores [[@QUADRO:id]] inseridos nos capítulos.' : 'Os quadros aparecem aqui automaticamente quando você insere marcadores nos capítulos.'}
+                    />
+                    <ReferenceSummaryCard
+                      title="Status do pós-textual"
+                      value={getStatusLabel(quadrosStatus)}
+                      helper="A lista fica concluída quando existe ao menos um quadro efetivamente usado no texto."
+                    />
+                  </div>
+                  {quadrosInReadingOrder.length === 0 ? (
+                    <div className="mt-5 rounded-[24px] border border-dashed border-border/80 bg-muted/25 px-5 py-5">
+                      <p className="text-sm font-medium text-foreground">Nenhum quadro utilizado no texto.</p>
+                    </div>
+                  ) : (
+                    <div className="mt-5 space-y-3">
+                      {quadrosInReadingOrder.map((item, index) => (
+                        <div key={item.id} className="rounded-[24px] border border-border/70 bg-white/84 px-4 py-4">
+                          <p className="text-sm font-medium text-foreground">{`Quadro ${index + 1} – ${item.title}`}</p>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                            {item.sourceText?.trim() ? item.sourceText : 'Fonte não informada.'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SectionCard>
+              ) : null}
+
               {isChapterView && selectedChapter ? (
                 <div className="space-y-7">
                   <SectionCard
@@ -2016,17 +2642,15 @@ export function EditorPage() {
                               />
                               <AcademicToolbarButton
                                 icon={FileSpreadsheet}
-                                label="Inserir tabela"
-                                tooltip="Em breve: tabelas ABNT integradas ao editor."
-                                disabled
-                                badge="Em breve"
-                              />
-                              <AcademicToolbarButton
-                                icon={LayoutPanelTop}
-                                label="Inserir quadro"
-                                tooltip="Em breve: quadros ABNT integrados ao editor."
-                                disabled
-                                badge="Em breve"
+                                label="Inserir tabela/quadro"
+                                tooltip="Cria uma tabela ou quadro acadêmico visual e insere no ponto atual do cursor."
+                                onClick={() => {
+                                  setTabularElementFeedback(null)
+                                  setTabularElementForm(defaultTabularElementFormState('table'))
+                                  setTabularValidationState({ valid: true, invalidCells: [] })
+                                  setTabularElementDialogOpen(true)
+                                }}
+                                disabled={tabularElementSaving}
                               />
                               </div>
                               <div className="flex min-w-max items-center gap-2 pl-3">
@@ -2037,6 +2661,14 @@ export function EditorPage() {
                                 <span className="h-4 w-px bg-border/70" />
                                 <span className="text-xs font-medium text-muted-foreground">
                                   {chapterFiguresListQuery.isLoading ? '...' : `${contentFigureIds.length} figuras`}
+                                </span>
+                                <span className="h-4 w-px bg-border/70" />
+                                <span className="text-xs font-medium text-muted-foreground">
+                                  {chapterTabularElementsListQuery.isLoading ? '...' : `${contentTableIds.length} tabelas`}
+                                </span>
+                                <span className="h-4 w-px bg-border/70" />
+                                <span className="text-xs font-medium text-muted-foreground">
+                                  {chapterTabularElementsListQuery.isLoading ? '...' : `${contentQuadroIds.length} quadros`}
                                 </span>
                                 {invalidCitationCount > 0 ? (
                                   <>
@@ -2051,6 +2683,14 @@ export function EditorPage() {
                                     <span className="h-4 w-px bg-border/70" />
                                     <span className="text-xs font-medium text-amber-700">
                                       {invalidFigureCount} figura(s) inválida(s)
+                                    </span>
+                                  </>
+                                ) : null}
+                                {invalidTabularElementCount > 0 ? (
+                                  <>
+                                    <span className="h-4 w-px bg-border/70" />
+                                    <span className="text-xs font-medium text-amber-700">
+                                      {invalidTabularElementCount} elemento(s) inválido(s)
                                     </span>
                                   </>
                                 ) : null}
@@ -2073,6 +2713,7 @@ export function EditorPage() {
                               value={content}
                               citationsMap={citationsMap}
                               figuresMap={figuresMap}
+                              tabularElementsMap={tabularElementsMap}
                               onChange={(nextValue) => {
                                 setContent(nextValue)
                                 latestContentRef.current = nextValue
@@ -2088,6 +2729,11 @@ export function EditorPage() {
                           {figureFeedback ? (
                             <p className={figureFeedback.tone === 'success' ? 'mt-4 text-sm text-primary' : 'mt-4 text-sm text-destructive'}>
                               {figureFeedback.message}
+                            </p>
+                          ) : null}
+                          {tabularElementFeedback ? (
+                            <p className={tabularElementFeedback.tone === 'success' ? 'mt-4 text-sm text-primary' : 'mt-4 text-sm text-destructive'}>
+                              {tabularElementFeedback.message}
                             </p>
                           ) : null}
                         </div>
@@ -2287,6 +2933,111 @@ export function EditorPage() {
                                   disabled={deletingFigureId === figure.id}
                                 >
                                   {deletingFigureId === figure.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                  Remover
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </SectionCard>
+
+                      <SectionCard
+                        title="Tabelas e quadros do capítulo"
+                        description="A contagem considera apenas marcadores [[@TABLE:id]] e [[@QUADRO:id]] presentes no texto, sem apagar elementos cadastrados para reutilização futura."
+                        className="rounded-[30px] border-border/55 bg-white/82 shadow-sm"
+                      >
+                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                          <ReferenceSummaryCard
+                            title="Tabelas no capítulo"
+                            value={chapterTabularElementsListQuery.isLoading ? '...' : `${chapterTabularElementsInText.filter((item) => item.kind === 'table').length}`}
+                            helper="Total de tabelas usadas no texto atual deste capítulo."
+                          />
+                          <ReferenceSummaryCard
+                            title="Quadros no capítulo"
+                            value={chapterTabularElementsListQuery.isLoading ? '...' : `${chapterTabularElementsInText.filter((item) => item.kind === 'quadro').length}`}
+                            helper="Total de quadros usados no texto atual deste capítulo."
+                          />
+                          <ReferenceSummaryCard
+                            title="Tabelas no projeto"
+                            value={projectTabularElementsListQuery.isLoading ? '...' : `${projectTabularElementsInText.filter((item) => item.kind === 'table').length}`}
+                            helper="Total de tabelas com marcador presente nos capítulos do projeto."
+                          />
+                          <ReferenceSummaryCard
+                            title="Quadros no projeto"
+                            value={projectTabularElementsListQuery.isLoading ? '...' : `${projectTabularElementsInText.filter((item) => item.kind === 'quadro').length}`}
+                            helper="Total de quadros com marcador presente nos capítulos do projeto."
+                          />
+                        </div>
+
+                        {chapterTabularElementsListQuery.isError ? (
+                          <p className="mt-5 rounded-[20px] border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                            Não foi possível carregar as tabelas e quadros deste capítulo.
+                          </p>
+                        ) : null}
+
+                        {!chapterTabularElementsListQuery.isLoading && chapterTabularElementsInText.length === 0 ? (
+                          <div className="mt-5 rounded-[24px] border border-dashed border-border/80 bg-muted/25 px-5 py-5">
+                            <p className="text-sm font-medium text-foreground">Nenhuma tabela ou quadro usado no texto ainda</p>
+                            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                              Use a toolbar acadêmica para inserir a primeira tabela ou quadro deste capítulo.
+                            </p>
+                          </div>
+                        ) : null}
+
+                        {chapterTabularElementsInText.length > 0 ? (
+                          <div className="mt-5 space-y-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/70">Elementos usados no texto</p>
+                            {chapterTabularElementsInText.map((item) => (
+                              <div key={item.id} className="flex flex-wrap items-start justify-between gap-4 rounded-[24px] border border-border/70 bg-white/84 px-4 py-4">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <StatusBadge label={item.kind === 'table' ? 'Tabela' : 'Quadro'} tone="info" />
+                                    <StatusBadge label="No texto" tone="success" />
+                                  </div>
+                                  <p className="mt-3 text-sm font-medium text-foreground">{buildTabularElementPreviewLabel(item)}</p>
+                                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                                    {item.sourceText?.trim() ? item.sourceText : 'Fonte não informada.'}
+                                  </p>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void handleRemoveTabularElement(item)}
+                                  disabled={deletingTabularElementId === item.id}
+                                >
+                                  {deletingTabularElementId === item.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                  Remover
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {chapterUnusedTabularElements.length > 0 ? (
+                          <div className="mt-5 space-y-3">
+                            <div className="rounded-[20px] border border-amber-200/70 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">
+                              {chapterUnusedTabularElements.length} elemento(s) cadastrado(s) continuam no sistema, mas não aparecem no texto atual.
+                            </div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Elementos cadastrados, mas não usados</p>
+                            {chapterUnusedTabularElements.map((item) => (
+                              <div key={item.id} className="flex flex-wrap items-start justify-between gap-4 rounded-[24px] border border-border/70 bg-muted/20 px-4 py-4">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <StatusBadge label={item.kind === 'table' ? 'Tabela' : 'Quadro'} tone="info" />
+                                    <StatusBadge label="Sem marcador" tone="warning" />
+                                  </div>
+                                  <p className="mt-3 text-sm font-medium text-foreground">{buildTabularElementPreviewLabel(item)}</p>
+                                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                                    {item.sourceText?.trim() ? item.sourceText : 'Fonte não informada.'}
+                                  </p>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void handleRemoveTabularElement(item)}
+                                  disabled={deletingTabularElementId === item.id}
+                                >
+                                  {deletingTabularElementId === item.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                                   Remover
                                 </Button>
                               </div>
@@ -2501,6 +3252,203 @@ export function EditorPage() {
               <Button onClick={() => void handleCreateFigure()} disabled={figureSaving}>
                 {figureSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileImage className="h-4 w-4" />}
                 {figureSaving ? 'Inserindo...' : 'Inserir figura'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={tabularElementDialogOpen}
+          onOpenChange={(open) => {
+            setTabularElementDialogOpen(open)
+            if (!open) {
+              setTabularValidationState({ valid: true, invalidCells: [] })
+            }
+          }}
+        >
+          <DialogContent
+            className="flex h-[90vh] max-h-[90vh] w-[min(90vw,860px)] max-w-[860px] flex-col overflow-hidden rounded-[28px] border-border/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(249,250,252,0.98))] p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)]"
+            data-testid="tabular-modal"
+          >
+            <div className="shrink-0 border-b border-border/60 px-6 py-5 md:px-7">
+              <DialogHeader className="text-left">
+                <DialogTitle className="text-[1.45rem] tracking-[-0.02em] text-foreground">
+                  Inserir tabela/quadro
+                </DialogTitle>
+                <DialogDescription className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  Monte o elemento visualmente e insira o marcador no ponto atual do capítulo, sem expor markdown ao usuário.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+
+            <div
+              className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-7"
+              data-testid="tabular-modal-body"
+            >
+              <div className="flex min-w-0 flex-col gap-5" data-testid="tabular-modal-stack">
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-foreground">Tipo</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {(['table', 'quadro'] as TabularElementKind[]).map((kind) => (
+                        <button
+                          key={kind}
+                          type="button"
+                          onClick={() => updateTabularElementForm('kind', kind)}
+                          className={`rounded-[22px] border px-4 py-3 text-left transition-colors ${
+                            tabularElementForm.kind === kind
+                              ? 'border-primary/50 bg-primary/6 shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
+                              : 'border-border/70 bg-white/84 hover:border-border'
+                          }`}
+                        >
+                          <p className="text-sm font-medium text-foreground">{kind === 'table' ? 'Tabela' : 'Quadro'}</p>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                            {kind === 'table' ? 'Visual mais aberto, próximo de tabela acadêmica.' : 'Visual com bordas fechadas, ideal para sínteses.'}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-foreground">Título</p>
+                    <Input
+                      value={tabularElementForm.title}
+                      onChange={(event) => updateTabularElementForm('title', event.target.value)}
+                      placeholder={tabularElementForm.kind === 'table' ? 'Ex.: Distribuição dos resultados por turma' : 'Ex.: Síntese dos critérios analisados'}
+                      className="h-11 rounded-2xl bg-white/84"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-foreground">Fonte <span className="text-muted-foreground">(opcional)</span></p>
+                    <Input
+                      value={tabularElementForm.sourceText}
+                      onChange={(event) => updateTabularElementForm('sourceText', event.target.value)}
+                      placeholder="Ex.: Elaboração própria."
+                      className="h-11 rounded-2xl bg-white/84"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2" data-testid="tabular-grid-toolbar">
+                    <Button type="button" variant="outline" size="sm" onClick={addTabularRow}>
+                      + Linha
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={addTabularColumn}>
+                      + Coluna
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={removeTabularRow} disabled={tabularElementForm.rows.length <= 1}>
+                      - Linha
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={removeTabularColumn}
+                      disabled={(tabularElementForm.rows[0]?.length ?? 0) <= 1}
+                    >
+                      - Coluna
+                    </Button>
+                  </div>
+
+                  <div
+                    className="min-w-0 overflow-x-auto rounded-[24px] border border-border/70 bg-white/88 p-4"
+                    data-testid="tabular-grid-scroller"
+                  >
+                    <div
+                      className="grid gap-3"
+                      style={{ gridTemplateColumns: `repeat(${tabularElementForm.rows[0]?.length ?? 1}, minmax(160px, 1fr))` }}
+                    >
+                      {tabularElementForm.rows.map((row, rowIndex) => row.map((cell, columnIndex) => (
+                        <Input
+                          key={`${rowIndex}-${columnIndex}`}
+                          value={cell}
+                          onChange={(event) => updateTabularCell(rowIndex, columnIndex, event.target.value)}
+                          placeholder={rowIndex === 0 ? `Cabeçalho ${columnIndex + 1}` : `Célula ${rowIndex + 1}.${columnIndex + 1}`}
+                          className={`min-h-[44px] rounded-2xl bg-white/84 px-3 py-2 ${
+                            rowIndex === 0 ? 'font-medium' : ''
+                          } ${
+                            tabularValidationState.invalidCells.some((cellPosition) => (
+                              cellPosition.rowIndex === rowIndex && cellPosition.columnIndex === columnIndex
+                            ))
+                              ? 'border-destructive/60 ring-1 ring-destructive/20'
+                              : ''
+                          }`}
+                        />
+                      )))}
+                    </div>
+                  </div>
+
+                <div
+                  className="rounded-[22px] border border-border/70 bg-[linear-gradient(180deg,rgba(250,251,252,0.95),rgba(255,255,255,0.98))] px-4 py-4"
+                  data-testid="tabular-preview-card"
+                >
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/70">Preview acadêmico</p>
+                  <div className="mt-3 space-y-3 text-center">
+                    <p className="text-[15px] font-medium leading-7 text-foreground">
+                      {getTabularElementLabel(
+                        {
+                          id: 'preview',
+                          projectId,
+                          chapterId: selectedChapterId ?? '',
+                          kind: tabularElementForm.kind,
+                          title: tabularElementForm.title.trim() || (tabularElementForm.kind === 'table' ? 'Tabela sem título' : 'Quadro sem título'),
+                          sourceText: tabularElementForm.sourceText.trim() || undefined,
+                          rows: tabularElementForm.rows,
+                        },
+                        1,
+                      )}
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className={tabularElementForm.kind === 'quadro' ? 'mx-auto w-full border-collapse text-left text-sm' : 'mx-auto w-full border-separate border-spacing-0 text-left text-sm'}>
+                        <tbody>
+                          {tabularElementForm.rows.map((row, rowIndex) => (
+                            <tr key={`preview-${rowIndex}`}>
+                              {row.map((cell, columnIndex) => (
+                                <td
+                                  key={`preview-${rowIndex}-${columnIndex}`}
+                                  className={tabularElementForm.kind === 'quadro'
+                                    ? 'border border-slate-300 px-3 py-2 align-top'
+                                    : rowIndex === 0
+                                      ? 'border-b border-slate-300 px-3 py-2 align-top font-semibold'
+                                      : 'border-b border-slate-200 px-3 py-2 align-top'}
+                                >
+                                  {cell || '—'}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-[13px] leading-6 text-muted-foreground">
+                      {tabularElementForm.sourceText.trim() ? `Fonte: ${tabularElementForm.sourceText.trim()}` : 'Fonte: não informada.'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {tabularElementFeedback?.tone === 'error' ? (
+                <p className="rounded-[18px] border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  {tabularElementFeedback.message}
+                </p>
+              ) : null}
+              {!tabularValidationState.valid ? (
+                <p className="rounded-[18px] border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  {tabularValidationState.message}
+                </p>
+              ) : null}
+            </div>
+
+            <DialogFooter
+              className="shrink-0 border-t border-border/60 bg-white/96 px-6 py-5 md:px-7"
+              data-testid="tabular-modal-footer"
+            >
+              <Button variant="outline" onClick={() => setTabularElementDialogOpen(false)} disabled={tabularElementSaving}>
+                Cancelar
+              </Button>
+              <Button onClick={() => void handleCreateTabularElement()} disabled={tabularElementSaving || !tabularElementForm.title.trim() || !currentTabularValidation.valid}>
+                {tabularElementSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+                {tabularElementSaving ? 'Inserindo...' : `Inserir ${tabularElementForm.kind === 'table' ? 'tabela' : 'quadro'}`}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -2823,9 +3771,10 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
   value: string
   citationsMap: Map<string, Citation>
   figuresMap: Map<string, Figure>
+  tabularElementsMap: Map<string, TabularElement>
   onChange: (value: string) => void
   placeholder: string
-}>(({ value, citationsMap, figuresMap, onChange, placeholder }, ref) => {
+}>(({ value, citationsMap, figuresMap, tabularElementsMap, onChange, placeholder }, ref) => {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const rawValueRef = useRef(value)
   const lastSelectionRef = useRef<{ start: number; end: number } | null>(null)
@@ -2838,7 +3787,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
     rawValueRef.current = value
 
     if (needsRerender) {
-      renderContentEditableValue(root, value, citationsMap, figuresMap)
+      renderContentEditableValue(root, value, citationsMap, figuresMap, tabularElementsMap)
     } else {
       Array.from(root.querySelectorAll<HTMLElement>('[data-citation-id]')).forEach((chip) => {
         const citationId = chip.dataset.citationId ?? ''
@@ -2856,8 +3805,20 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
         const nextNode = createFigureChipNode(document, figureId, figure, figureNumber)
         chip.replaceWith(nextNode)
       })
+      const tableNodes = Array.from(root.querySelectorAll<HTMLElement>('[data-table-id]'))
+      tableNodes.forEach((node, index) => {
+        const itemId = node.dataset.tableId ?? ''
+        const nextNode = createTabularElementNode(document, itemId, tabularElementsMap.get(itemId), index + 1, 'table')
+        node.replaceWith(nextNode)
+      })
+      const quadroNodes = Array.from(root.querySelectorAll<HTMLElement>('[data-quadro-id]'))
+      quadroNodes.forEach((node, index) => {
+        const itemId = node.dataset.quadroId ?? ''
+        const nextNode = createTabularElementNode(document, itemId, tabularElementsMap.get(itemId), index + 1, 'quadro')
+        node.replaceWith(nextNode)
+      })
     }
-  }, [citationsMap, figuresMap, value])
+  }, [citationsMap, figuresMap, tabularElementsMap, value])
 
   useEffect(() => {
     const updateSelectionSnapshot = () => {
@@ -2940,10 +3901,10 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       const endOffset = range
         ? getSerializedOffset(root, range.endContainer, range.endOffset)
         : lastSelectionRef.current?.end ?? startOffset
-      const { nextValue, caretOffset } = buildFigureInsertionContent(value, startOffset, endOffset, marker)
+      const { nextValue, caretOffset } = buildBlockInsertionContent(value, startOffset, endOffset, marker)
 
       rawValueRef.current = nextValue
-      renderContentEditableValue(root, nextValue, citationsMap, nextFiguresMap)
+      renderContentEditableValue(root, nextValue, citationsMap, nextFiguresMap, tabularElementsMap)
       window.requestAnimationFrame(() => {
         placeCaretAtSerializedOffset(root, caretOffset)
       })
@@ -2953,7 +3914,40 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       onChange(nextValue)
       return { value: nextValue, caretOffset }
     },
-  }), [citationsMap, figuresMap, onChange, value])
+    insertTabularElement(itemId: string, kind: TabularElementKind, itemOverride?: TabularElement) {
+      const root = rootRef.current
+      if (!root) {
+        return { value, caretOffset: value.length }
+      }
+
+      const selection = window.getSelection()
+      const marker = buildTabularMarker(kind, itemId)
+      const nextTabularElementsMap = itemOverride
+        ? new Map(tabularElementsMap).set(itemId, itemOverride)
+        : tabularElementsMap
+      const range = selection && selection.rangeCount > 0 && root.contains(selection.anchorNode)
+        ? selection.getRangeAt(0)
+        : null
+      const startOffset = range
+        ? getSerializedOffset(root, range.startContainer, range.startOffset)
+        : lastSelectionRef.current?.start ?? value.length
+      const endOffset = range
+        ? getSerializedOffset(root, range.endContainer, range.endOffset)
+        : lastSelectionRef.current?.end ?? startOffset
+      const { nextValue, caretOffset } = buildBlockInsertionContent(value, startOffset, endOffset, marker)
+
+      rawValueRef.current = nextValue
+      renderContentEditableValue(root, nextValue, citationsMap, figuresMap, nextTabularElementsMap)
+      window.requestAnimationFrame(() => {
+        placeCaretAtSerializedOffset(root, caretOffset)
+      })
+
+      rawValueRef.current = nextValue
+      lastSelectionRef.current = { start: caretOffset, end: caretOffset }
+      onChange(nextValue)
+      return { value: nextValue, caretOffset }
+    },
+  }), [citationsMap, figuresMap, onChange, tabularElementsMap, value])
 
   function emitCurrentValue() {
     const root = rootRef.current
@@ -2994,7 +3988,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
         return container.childNodes[offset] ?? null
       })()
 
-      if (sibling instanceof HTMLElement && (sibling.dataset.citationId || sibling.dataset.figureId)) {
+      if (sibling instanceof HTMLElement && (sibling.dataset.citationId || sibling.dataset.figureId || sibling.dataset.tableId || sibling.dataset.quadroId)) {
         event.preventDefault()
         const nextCaretTarget = event.key === 'Backspace' ? sibling.previousSibling : sibling.nextSibling
         sibling.remove()

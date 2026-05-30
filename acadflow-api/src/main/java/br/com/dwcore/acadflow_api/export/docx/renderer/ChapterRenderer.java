@@ -7,6 +7,7 @@ import br.com.dwcore.acadflow_api.citation.domain.CitationType;
 import br.com.dwcore.acadflow_api.citation.service.CitationFormatter;
 import br.com.dwcore.acadflow_api.export.docx.DocxHelper;
 import br.com.dwcore.acadflow_api.export.docx.dto.NumberedFigure;
+import br.com.dwcore.acadflow_api.export.docx.dto.NumberedTable;
 import br.com.dwcore.acadflow_api.export.template.AcademicTemplate;
 import br.com.dwcore.acadflow_api.export.template.AcademicTemplateRegistry;
 import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
@@ -25,13 +26,22 @@ import java.util.regex.Pattern;
 
 public class ChapterRenderer {
 
+    private static final String UUID_PATTERN =
+            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+
     private static final Pattern CITE_PATTERN = Pattern.compile(
-            "\\[\\[@CITE:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\]\\]"
+            "\\[\\[@CITE:(" + UUID_PATTERN + ")\\]\\]"
     );
 
     private static final Pattern FIG_PATTERN = Pattern.compile(
-            "\\[\\[@FIG:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\]\\]"
+            "\\[\\[@FIG:(" + UUID_PATTERN + ")\\]\\]"
     );
+
+    private static final Pattern TABLE_QUADRO_PATTERN = Pattern.compile(
+            "\\[\\[@(?:TABLE|QUADRO):(" + UUID_PATTERN + ")\\]\\]"
+    );
+
+    private final TableRenderer tableRenderer = new TableRenderer();
 
     // Text area width: A4 (21cm) - left margin (3cm) - right margin (2cm) = 16cm
     private static final long TEXT_WIDTH_EMU = 16L * 360_000L;
@@ -54,6 +64,14 @@ public class ChapterRenderer {
                        Map<UUID, Citation> citationLookup,
                        Map<UUID, NumberedFigure> numberedFigureLookup,
                        AcademicTemplate template) {
+        render(doc, chapters, citationLookup, numberedFigureLookup, Map.of(), template);
+    }
+
+    public void render(XWPFDocument doc, List<Chapter> chapters,
+                       Map<UUID, Citation> citationLookup,
+                       Map<UUID, NumberedFigure> numberedFigureLookup,
+                       Map<UUID, NumberedTable> numberedTableLookup,
+                       AcademicTemplate template) {
         int number = 1;
         for (Chapter chapter : chapters) {
             if (chapter.getType() == ChapterType.REFERENCES) continue;
@@ -69,7 +87,7 @@ public class ChapterRenderer {
                 for (String block : content.split("\\n\\n+")) {
                     String trimmedBlock = block.trim();
                     if (trimmedBlock.isEmpty()) continue;
-                    renderBlock(doc, trimmedBlock, citationLookup, numberedFigureLookup);
+                    renderBlock(doc, trimmedBlock, citationLookup, numberedFigureLookup, numberedTableLookup);
                 }
             }
         }
@@ -77,16 +95,18 @@ public class ChapterRenderer {
 
     private void renderBlock(XWPFDocument doc, String block,
                               Map<UUID, Citation> citationLookup,
-                              Map<UUID, NumberedFigure> numberedFigureLookup) {
-        boolean hasCite = !citationLookup.isEmpty() && CITE_PATTERN.matcher(block).find();
-        boolean hasFig  = !numberedFigureLookup.isEmpty() && FIG_PATTERN.matcher(block).find();
+                              Map<UUID, NumberedFigure> numberedFigureLookup,
+                              Map<UUID, NumberedTable> numberedTableLookup) {
+        boolean hasCite  = !citationLookup.isEmpty() && CITE_PATTERN.matcher(block).find();
+        boolean hasFig   = !numberedFigureLookup.isEmpty() && FIG_PATTERN.matcher(block).find();
+        boolean hasTable = !numberedTableLookup.isEmpty() && TABLE_QUADRO_PATTERN.matcher(block).find();
 
-        if (!hasCite && !hasFig) {
+        if (!hasCite && !hasFig && !hasTable) {
             renderPlainBlock(doc, block);
             return;
         }
 
-        List<Object> tokens = tokenize(block, citationLookup, numberedFigureLookup);
+        List<Object> tokens = tokenize(block, citationLookup, numberedFigureLookup, numberedTableLookup);
         XWPFParagraph current = null;
 
         for (Object token : tokens) {
@@ -96,6 +116,9 @@ public class ChapterRenderer {
             } else if (token instanceof NumberedFigure nf) {
                 current = null;
                 renderFigureBlock(doc, nf);
+            } else if (token instanceof NumberedTable nt) {
+                current = null;
+                tableRenderer.render(doc, nt);
             } else {
                 if (current == null) current = createBodyParagraph(doc);
                 if (token instanceof String text) {
@@ -195,9 +218,10 @@ public class ChapterRenderer {
 
     private List<Object> tokenize(String block,
                                    Map<UUID, Citation> citationLookup,
-                                   Map<UUID, NumberedFigure> numberedFigureLookup) {
+                                   Map<UUID, NumberedFigure> numberedFigureLookup,
+                                   Map<UUID, NumberedTable> numberedTableLookup) {
         Pattern combined = Pattern.compile(
-                "\\[\\[@(CITE|FIG):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\]\\]"
+                "\\[\\[@(CITE|FIG|TABLE|QUADRO):(" + UUID_PATTERN + ")\\]\\]"
         );
 
         List<Object> tokens = new ArrayList<>();
@@ -214,9 +238,12 @@ public class ChapterRenderer {
             if ("CITE".equals(type)) {
                 Citation citation = citationLookup.get(id);
                 tokens.add(citation != null ? citation : m.group(0));
-            } else {
+            } else if ("FIG".equals(type)) {
                 NumberedFigure nf = numberedFigureLookup.get(id);
                 tokens.add(nf != null ? nf : m.group(0));
+            } else {
+                NumberedTable nt = numberedTableLookup.get(id);
+                tokens.add(nt != null ? nt : m.group(0));
             }
             last = m.end();
         }

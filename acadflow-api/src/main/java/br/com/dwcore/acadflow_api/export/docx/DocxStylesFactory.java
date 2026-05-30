@@ -74,6 +74,12 @@ public final class DocxStylesFactory {
         refInd.setHanging(BigInteger.valueOf(DocxHelper.INDENT_REF_HANGING));
         rpr(ref, DocxHelper.FONT, DocxHelper.FONT_BODY, false);
         styles.addStyle(new XWPFStyle(ref));
+
+        // ABNTTable — 10pt TNR, left, 1.0 spacing — for table/quadro cell content
+        CTStyle table = base(DocxHelper.STYLE_TABLE, "ABNT Table");
+        ppr(table, STJc.LEFT, 240, 0, 0);
+        rpr(table, DocxHelper.FONT, DocxHelper.FONT_SMALL, false);
+        styles.addStyle(new XWPFStyle(table));
     }
 
     private static CTStyle base(String id, String name) {
