@@ -5,6 +5,7 @@ import type {
   AiSuggestion,
   Chapter,
   Citation,
+  Figure,
   Notification,
   PDFDocument,
   Plan,
@@ -21,6 +22,7 @@ export interface MockDatabase {
   projects: Project[]
   chapters: Chapter[]
   citations: Citation[]
+  figures: Figure[]
   references: Reference[]
   timelineTasks: TimelineTask[]
   advisorComments: AdvisorComment[]
@@ -185,6 +187,22 @@ const citations: Citation[] = [
   },
 ]
 
+const figures: Figure[] = [
+  {
+    id: 'figure-1',
+    projectId: 'project-1',
+    chapterId: 'chapter-2',
+    caption: 'Arquitetura geral do sistema de tutoria inteligente',
+    sourceText: 'Elaboração própria.',
+    originalFilename: 'arquitetura-sti.png',
+    mimeType: 'image/png',
+    fileSizeBytes: 245_760,
+    widthPercent: 75,
+    createdAt: new Date('2024-03-21'),
+    imageUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480"><rect width="100%25" height="100%25" fill="%23eef2ff"/><text x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" fill="%23475569" font-family="Arial" font-size="28">Figura mock</text></svg>',
+  },
+]
+
 const timelineTasks: TimelineTask[] = [
   {
     id: 'task-1',
@@ -309,6 +327,7 @@ const projects: Project[] = [
     institution: 'Universidade Federal de São Paulo',
     advisorId: 'advisor-1',
     norm: 'ABNT',
+    templateProfile: 'ABNT_GENERIC',
     deadline: new Date('2024-12-15'),
     status: 'writing',
     progress: 45,
@@ -533,6 +552,7 @@ export const mockDb: MockDatabase = {
   projects,
   chapters,
   citations,
+  figures,
   references,
   timelineTasks,
   advisorComments,

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Check, Sparkles } from 'lucide-react'
 import { createProject } from '@/features/projects/services/projects.service'
-import { academicDegreeOptions } from '@/shared/services/project.service'
+import { academicDegreeOptions, academicTemplateOptions, getAcademicTemplateLabel } from '@/shared/services/project.service'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
@@ -12,12 +12,30 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 const courses = ['Administração', 'Ciência da Computação', 'Direito', 'Enfermagem', 'Engenharia Civil', 'Medicina']
 const norms = ['ABNT', 'APA', 'Vancouver']
+type ProjectWizardFormState = {
+  title: string
+  subtitle: string
+  course: string
+  institution: string
+  academicDegree: string
+  advisorName: string
+  deadline: string
+  norm: 'ABNT' | 'APA' | 'Vancouver'
+  templateProfile: 'ABNT_GENERIC' | 'FEMAF'
+  defenseCity: string
+  defenseYear: string
+  theme: string
+  researchProblem: string
+  generalObjective: string
+  specificObjectives: string[]
+  keywords: string
+}
 
 export function ProjectWizard() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [creating, setCreating] = useState(false)
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<ProjectWizardFormState>({
     title: '',
     subtitle: '',
     course: '',
@@ -26,6 +44,7 @@ export function ProjectWizard() {
     advisorName: '',
     deadline: '',
     norm: 'ABNT',
+    templateProfile: 'ABNT_GENERIC' as const,
     defenseCity: '',
     defenseYear: '',
     theme: '',
@@ -49,6 +68,7 @@ export function ProjectWizard() {
       advisorName: form.advisorName,
       deadline: form.deadline,
       norm: form.norm as 'ABNT' | 'APA' | 'Vancouver',
+      templateProfile: form.templateProfile,
       defenseCity: form.defenseCity,
       defenseYear: form.defenseYear ? Number(form.defenseYear) : undefined,
       theme: form.theme,
@@ -75,7 +95,7 @@ export function ProjectWizard() {
     <div className="space-y-8">
       <div className="surface-card rounded-[28px] p-6">
         <div className="space-y-6">
-          <ProjectFormSection title="Identificação" description="Defina o nome do trabalho e o enquadramento acadêmico principal.">
+          <ProjectFormSection title="Dados principais" description="Defina os dados centrais do projeto, incluindo o modelo acadêmico que orienta a exportação institucional.">
             <div className="grid gap-5 md:grid-cols-2">
               <Field label="Título do TCC" className="md:col-span-2">
                 <Input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Ex: Inteligência Artificial aplicada à educação" className="h-12 rounded-2xl" />
@@ -83,8 +103,23 @@ export function ProjectWizard() {
               <Field label="Subtítulo" className="md:col-span-2">
                 <Input value={form.subtitle} onChange={(event) => setForm({ ...form, subtitle: event.target.value })} className="h-12 rounded-2xl" />
               </Field>
+              <Field label="Instituição">
+                <Input value={form.institution} onChange={(event) => setForm({ ...form, institution: event.target.value })} className="h-12 rounded-2xl" />
+              </Field>
+              <Field label="Curso">
+                <Select value={form.course} onValueChange={(value) => setForm({ ...form, course: value })}>
+                  <SelectTrigger className="h-12 rounded-2xl">
+                    <SelectValue placeholder="Selecione um curso" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {courses.map((course) => (
+                      <SelectItem key={course} value={course}>{course}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
               <Field label="Norma acadêmica">
-                <Select value={form.norm} onValueChange={(value) => setForm({ ...form, norm: value })}>
+                <Select value={form.norm} onValueChange={(value) => setForm({ ...form, norm: value as ProjectWizardFormState['norm'] })}>
                   <SelectTrigger className="h-12 rounded-2xl">
                     <SelectValue />
                   </SelectTrigger>
@@ -94,6 +129,24 @@ export function ProjectWizard() {
                     ))}
                   </SelectContent>
                 </Select>
+              </Field>
+              <Field label="Modelo acadêmico">
+                <Select
+                  value={form.templateProfile}
+                  onValueChange={(value) => setForm({ ...form, templateProfile: value as ProjectWizardFormState['templateProfile'] })}
+                >
+                  <SelectTrigger className="h-12 rounded-2xl">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {academicTemplateOptions.map((template) => (
+                      <SelectItem key={template.value} value={template.value}>{template.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  Define as regras institucionais de exportação do trabalho.
+                </p>
               </Field>
               <Field label="Grau acadêmico">
                 <Select value={form.academicDegree || 'none'} onValueChange={(value) => setForm({ ...form, academicDegree: value === 'none' ? '' : value })}>
@@ -108,31 +161,6 @@ export function ProjectWizard() {
                   </SelectContent>
                 </Select>
               </Field>
-            </div>
-          </ProjectFormSection>
-
-          <ProjectFormSection title="Instituição e curso" description="Dados institucionais do contexto em que o TCC será defendido.">
-            <div className="grid gap-5 md:grid-cols-2">
-              <Field label="Curso">
-                <Select value={form.course} onValueChange={(value) => setForm({ ...form, course: value })}>
-                  <SelectTrigger className="h-12 rounded-2xl">
-                    <SelectValue placeholder="Selecione um curso" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {courses.map((course) => (
-                      <SelectItem key={course} value={course}>{course}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Instituição">
-                <Input value={form.institution} onChange={(event) => setForm({ ...form, institution: event.target.value })} className="h-12 rounded-2xl" />
-              </Field>
-            </div>
-          </ProjectFormSection>
-
-          <ProjectFormSection title="Defesa" description="Defina orientação, prazo e identificação formal da defesa.">
-            <div className="grid gap-5 md:grid-cols-2">
               <Field label="Orientador" className="md:col-span-2">
                 <Input value={form.advisorName} onChange={(event) => setForm({ ...form, advisorName: event.target.value })} className="h-12 rounded-2xl" />
               </Field>
@@ -146,6 +174,11 @@ export function ProjectWizard() {
                 <Input type="number" min="1900" max="2999" value={form.defenseYear} onChange={(event) => setForm({ ...form, defenseYear: event.target.value })} className="h-12 rounded-2xl" />
               </Field>
             </div>
+            {form.templateProfile === 'FEMAF' ? (
+              <p className="rounded-[18px] border border-border/70 bg-muted/30 px-4 py-3 text-sm leading-6 text-muted-foreground">
+                Este modelo aplica capa, folha de rosto e estrutura conforme padrão institucional FEMAF.
+              </p>
+            ) : null}
           </ProjectFormSection>
 
           <ProjectFormSection title="Pesquisa" description="Estruture o recorte do problema e o ponto de partida conceitual do estudo.">
@@ -223,6 +256,10 @@ export function ProjectWizard() {
                   <span className="text-sm text-muted-foreground">Gerado com base no briefing</span>
                 </div>
               ))}
+            </div>
+            <div className="mt-4 rounded-[22px] border border-border/70 bg-white/70 px-4 py-4">
+              <p className="text-sm font-medium text-foreground">Modelo selecionado: {getAcademicTemplateLabel(form.templateProfile)}</p>
+              <p className="mt-1 text-sm text-muted-foreground">A personalização visual completa do template será aplicada nas próximas etapas de exportação.</p>
             </div>
           </ProjectFormSection>
         </div>

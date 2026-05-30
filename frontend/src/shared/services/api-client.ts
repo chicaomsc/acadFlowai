@@ -81,7 +81,9 @@ class ApiClient {
       Accept: 'application/json',
     }
 
-    if (options.body !== undefined) {
+    const isFormDataBody = options.body instanceof FormData
+
+    if (options.body !== undefined && !isFormDataBody) {
       headers['Content-Type'] = 'application/json'
     }
 
@@ -93,7 +95,11 @@ class ApiClient {
     const response = await fetch(createUrl(resource, options.query), {
       method,
       headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body: options.body === undefined
+        ? undefined
+        : isFormDataBody
+          ? options.body as FormData
+          : JSON.stringify(options.body),
     })
 
     const payload = await parseResponseBody(response)

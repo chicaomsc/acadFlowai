@@ -1,6 +1,7 @@
 package br.com.dwcore.acadflow_api.project.domain;
 
 import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
+import br.com.dwcore.acadflow_api.export.template.AcademicTemplateType;
 import br.com.dwcore.acadflow_api.user.domain.User;
 import jakarta.persistence.*;
 import lombok.*;
@@ -53,6 +54,10 @@ public class Project {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private AcademicNorm norm;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "template_profile")
+    private AcademicTemplateType templateProfile;
 
     private LocalDate deadline;
 

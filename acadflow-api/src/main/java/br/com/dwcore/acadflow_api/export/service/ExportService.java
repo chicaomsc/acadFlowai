@@ -6,9 +6,13 @@ import br.com.dwcore.acadflow_api.chapter.repository.ChapterRepository;
 import br.com.dwcore.acadflow_api.citation.domain.Citation;
 import br.com.dwcore.acadflow_api.citation.repository.CitationRepository;
 import br.com.dwcore.acadflow_api.export.docx.DocxBuilder;
+import br.com.dwcore.acadflow_api.export.docx.dto.LoadedFigure;
 import br.com.dwcore.acadflow_api.export.dto.CreateExportRequest;
 import br.com.dwcore.acadflow_api.export.dto.ExportArtifactResponse;
 import br.com.dwcore.acadflow_api.export.dto.ExportStatusResponse;
+import br.com.dwcore.acadflow_api.figure.domain.Figure;
+import br.com.dwcore.acadflow_api.figure.repository.FigureRepository;
+import br.com.dwcore.acadflow_api.figure.service.FigureStorageService;
 import br.com.dwcore.acadflow_api.project.domain.Project;
 import br.com.dwcore.acadflow_api.project.repository.ProjectRepository;
 import br.com.dwcore.acadflow_api.reference.domain.Reference;
@@ -31,11 +35,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.Normalizer;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -47,6 +47,10 @@ public class ExportService {
 
     private static final Pattern CITE_MARKER = Pattern.compile(
             "\\[\\[@CITE:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\]\\]"
+    );
+
+    private static final Pattern FIG_MARKER = Pattern.compile(
+            "\\[\\[@FIG:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\]\\]"
     );
 
     private static final Set<ChapterType> REQUIRED_TEXTUAL_TYPES = Set.of(
@@ -62,6 +66,8 @@ public class ExportService {
     private final ChapterRepository chapterRepository;
     private final ReferenceRepository referenceRepository;
     private final CitationRepository citationRepository;
+    private final FigureRepository figureRepository;
+    private final FigureStorageService figureStorageService;
     private final UserService userService;
     private final DocxBuilder docxBuilder;
 
@@ -103,8 +109,20 @@ public class ExportService {
         List<Citation> citations = citationRepository.findByProjectId(project.getId());
         Map<UUID, Citation> citationLookup = citations.stream()
                 .collect(Collectors.toMap(Citation::getId, c -> c));
+
+        List<Figure> figures = figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId());
+        Map<UUID, LoadedFigure> figureLookup = new HashMap<>();
+        for (Figure f : figures) {
+            try {
+                byte[] data = figureStorageService.load(f.getStorageKey());
+                figureLookup.put(f.getId(), new LoadedFigure(f, data));
+            } catch (IOException e) {
+                log.warn("Figura {} não pôde ser carregada do storage: {}", f.getId(), e.getMessage());
+            }
+        }
+
         try {
-            byte[] content = docxBuilder.build(project, chapters, references, citationLookup);
+            byte[] content = docxBuilder.build(project, chapters, references, citationLookup, figureLookup);
             saveFile(project.getId(), fileName, content);
         } catch (IOException e) {
             throw new UncheckedIOException("Falha ao gerar arquivo DOCX", e);
@@ -141,6 +159,7 @@ public class ExportService {
         int chapterCoverage = checkTextualChapters(chapters, pendingItems, completedItems);
         int referenceCoverage = checkReferences(references, pendingItems, completedItems);
         checkOrphanCitationMarkers(project.getId(), chapters, pendingItems);
+        checkOrphanFigureMarkers(project.getId(), chapters, pendingItems);
 
         return new ExportStatusResponse(
                 project.getId(),
@@ -244,6 +263,33 @@ public class ExportService {
                 if (!knownIds.contains(markerId)) {
                     pending.add("Capítulo '" + chapter.getTitle() + "' possui citação inválida ou removida");
                     break;
+                }
+            }
+        }
+    }
+
+    private void checkOrphanFigureMarkers(UUID projectId, List<Chapter> chapters, List<String> pending) {
+        List<Figure> figures = figureRepository.findByProjectIdOrderByCreatedAtAsc(projectId);
+        Map<UUID, Figure> knownFigs = figures.stream()
+                .collect(Collectors.toMap(Figure::getId, f -> f));
+        Set<UUID> storageMissingReported = new HashSet<>();
+
+        for (Chapter chapter : chapters) {
+            if (chapter.getContent() == null || chapter.getContent().isBlank()) continue;
+            Matcher m = FIG_MARKER.matcher(chapter.getContent());
+            boolean orphanReported = false;
+            while (m.find()) {
+                UUID markerId = UUID.fromString(m.group(1));
+                Figure fig = knownFigs.get(markerId);
+                if (fig == null) {
+                    if (!orphanReported) {
+                        pending.add("Capítulo '" + chapter.getTitle() + "' possui figura inválida ou removida");
+                        orphanReported = true;
+                    }
+                } else if (!storageMissingReported.contains(fig.getId())
+                        && !figureStorageService.exists(fig.getStorageKey())) {
+                    pending.add("Figura '" + fig.getCaption() + "' não possui arquivo disponível");
+                    storageMissingReported.add(fig.getId());
                 }
             }
         }

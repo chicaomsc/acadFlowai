@@ -8,8 +8,10 @@ import br.com.dwcore.acadflow_api.project.domain.AcademicDegree;
 import br.com.dwcore.acadflow_api.project.domain.AcademicNorm;
 import br.com.dwcore.acadflow_api.project.domain.Project;
 import br.com.dwcore.acadflow_api.project.domain.ProjectStatus;
+import br.com.dwcore.acadflow_api.export.template.AcademicTemplateType;
 import br.com.dwcore.acadflow_api.project.dto.CreateProjectRequest;
 import br.com.dwcore.acadflow_api.project.dto.ProjectDetailResponse;
+import br.com.dwcore.acadflow_api.project.dto.ProjectResponse;
 import br.com.dwcore.acadflow_api.project.dto.UpdateProjectRequest;
 import br.com.dwcore.acadflow_api.project.repository.ProjectRepository;
 import br.com.dwcore.acadflow_api.project.service.ProjectService;
@@ -79,7 +81,7 @@ class ProjectServiceTest {
         var request = new CreateProjectRequest(
                 "Meu TCC", "Ciência da Computação", "UFBA",
                 null, AcademicNorm.ABNT, null, null, null, null, null,
-                null, null, null, null, null, null, null
+                null, null, null, null, null, null, null, null
         );
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
@@ -89,6 +91,7 @@ class ProjectServiceTest {
                     .id(UUID.randomUUID()).user(p.getUser()).title(p.getTitle())
                     .course(p.getCourse()).institution(p.getInstitution())
                     .norm(p.getNorm()).status(ProjectStatus.IN_PROGRESS)
+                    .templateProfile(p.getTemplateProfile())
                     .createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now())
                     .chapters(new ArrayList<>()).build();
             return p;
@@ -126,7 +129,7 @@ class ProjectServiceTest {
                 null, AcademicNorm.ABNT, null, null, null, null, null,
                 "Subtítulo do trabalho", AcademicDegree.GRADUACAO,
                 "Salvador", 2025,
-                "Resumo em português.", "Abstract in English.", "IA, saúde"
+                "Resumo em português.", "Abstract in English.", "IA, saúde", null
         );
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
@@ -169,7 +172,7 @@ class ProjectServiceTest {
         var request = new CreateProjectRequest(
                 "TCC Timestamps", "CC", "UFBA",
                 null, AcademicNorm.ABNT, null, null, null, null, null,
-                null, null, null, null, null, null, null
+                null, null, null, null, null, null, null, null
         );
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
@@ -179,6 +182,7 @@ class ProjectServiceTest {
                     .id(UUID.randomUUID()).user(p.getUser()).title(p.getTitle())
                     .course(p.getCourse()).institution(p.getInstitution())
                     .norm(p.getNorm()).status(ProjectStatus.IN_PROGRESS)
+                    .templateProfile(p.getTemplateProfile())
                     .createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now())
                     .chapters(new ArrayList<>()).build();
             return p;
@@ -208,7 +212,7 @@ class ProjectServiceTest {
         var request = new CreateProjectRequest(
                 "TCC Export", "CC", "UFBA",
                 null, AcademicNorm.ABNT, null, null, null, null, null,
-                null, null, null, null, null, null, null
+                null, null, null, null, null, null, null, null
         );
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
@@ -218,6 +222,7 @@ class ProjectServiceTest {
                     .id(UUID.randomUUID()).user(p.getUser()).title(p.getTitle())
                     .course(p.getCourse()).institution(p.getInstitution())
                     .norm(p.getNorm()).status(ProjectStatus.IN_PROGRESS)
+                    .templateProfile(p.getTemplateProfile())
                     .createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now())
                     .chapters(new ArrayList<>()).build();
             return p;
@@ -263,7 +268,7 @@ class ProjectServiceTest {
         var request = new UpdateProjectRequest(
                 "Título Novo", null, null, null, null,
                 null, null, null, null, null, null,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(projectRepository.findByIdAndUserId(project.getId(), user.getId()))
@@ -297,7 +302,7 @@ class ProjectServiceTest {
                 null, null, null, null, null, null,
                 "Subtítulo atualizado", AcademicDegree.MESTRADO,
                 "Recife", 2026,
-                "Resumo PT atualizado", null, "IA, machine learning");
+                "Resumo PT atualizado", null, "IA, machine learning", null);
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(projectRepository.findByIdAndUserId(project.getId(), user.getId()))
@@ -335,7 +340,7 @@ class ProjectServiceTest {
         var request = new UpdateProjectRequest(
                 "X", null, null, null, null,
                 null, null, null, null, null, null,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> projectService.update(projectId, request, user.getEmail()))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -353,7 +358,7 @@ class ProjectServiceTest {
         var request = new UpdateProjectRequest(
                 "Novo Título", null, null, null, null,
                 null, null, null, null, null, null,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(projectRepository.findByIdAndUserId(project.getId(), user.getId()))
@@ -388,7 +393,7 @@ class ProjectServiceTest {
         var request = new UpdateProjectRequest(
                 null, null, null, null, null,
                 null, null, null, null, null, null,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
 
         when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
         when(projectRepository.findByIdAndUserId(project.getId(), user.getId()))
@@ -618,5 +623,138 @@ class ProjectServiceTest {
         assertThatThrownBy(() -> projectService.findDetailById(projectId, user.getEmail()))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("Projeto não encontrado");
+    }
+
+    // ---------- templateProfile ----------
+
+    @Test
+    void shouldCreateProjectWithFemafTemplate() {
+        User user = buildUser();
+        var request = new CreateProjectRequest(
+                "TCC FEMAF", "Direito", "FEMAF",
+                null, AcademicNorm.ABNT, null, null, null, null, null,
+                null, null, null, null, null, null, null, AcademicTemplateType.FEMAF
+        );
+
+        when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
+        when(projectRepository.saveAndFlush(any(Project.class))).thenAnswer(inv -> {
+            Project p = inv.getArgument(0);
+            return Project.builder()
+                    .id(UUID.randomUUID()).user(p.getUser()).title(p.getTitle())
+                    .course(p.getCourse()).institution(p.getInstitution())
+                    .norm(p.getNorm()).status(ProjectStatus.IN_PROGRESS)
+                    .templateProfile(p.getTemplateProfile())
+                    .createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now())
+                    .chapters(new ArrayList<>()).build();
+        });
+        when(chapterRepository.saveAllAndFlush(anyList())).thenReturn(List.of());
+        when(exportService.calculateStatus(any(Project.class), anyString()))
+                .thenAnswer(inv -> stubExportStatus(((Project) inv.getArgument(0)).getId()));
+
+        ProjectDetailResponse response = projectService.create(request, user.getEmail());
+
+        assertThat(response.templateProfile()).isEqualTo("FEMAF");
+    }
+
+    @Test
+    void shouldUpdateTemplateProfileToFemaf() {
+        User user = buildUser();
+        Project project = Project.builder()
+                .id(UUID.randomUUID()).user(user).title("TCC")
+                .course("Direito").institution("FEMAF").norm(AcademicNorm.ABNT)
+                .status(ProjectStatus.IN_PROGRESS).chapters(new ArrayList<>()).build();
+
+        var request = new UpdateProjectRequest(
+                null, null, null, null, null,
+                null, null, null, null, null, null,
+                null, null, null, null, null, null, null, AcademicTemplateType.FEMAF);
+
+        when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId()))
+                .thenReturn(Optional.of(project));
+        when(projectRepository.saveAndFlush(any(Project.class))).thenAnswer(inv -> {
+            Project p = inv.getArgument(0);
+            p.setUpdatedAt(LocalDateTime.now());
+            return p;
+        });
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        when(timelineTaskRepository.findByProjectIdOrderByOrderIndexAscCreatedAtAsc(any())).thenReturn(List.of());
+        when(exportService.calculateStatus(any(Project.class), anyString()))
+                .thenReturn(new ExportStatusResponse(project.getId(), "docx", false, 0,
+                        List.of(), List.of(), 0, 0, 0));
+
+        ProjectDetailResponse response = projectService.update(project.getId(), request, user.getEmail());
+
+        assertThat(response.templateProfile()).isEqualTo("FEMAF");
+    }
+
+    @Test
+    void shouldUpdateTemplateProfileToAbntGeneric() {
+        User user = buildUser();
+        Project project = Project.builder()
+                .id(UUID.randomUUID()).user(user).title("TCC")
+                .course("Direito").institution("FEMAF").norm(AcademicNorm.ABNT)
+                .templateProfile(AcademicTemplateType.FEMAF)
+                .status(ProjectStatus.IN_PROGRESS).chapters(new ArrayList<>()).build();
+
+        var request = new UpdateProjectRequest(
+                null, null, null, null, null,
+                null, null, null, null, null, null,
+                null, null, null, null, null, null, null, AcademicTemplateType.ABNT_GENERIC);
+
+        when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId()))
+                .thenReturn(Optional.of(project));
+        when(projectRepository.saveAndFlush(any(Project.class))).thenAnswer(inv -> {
+            Project p = inv.getArgument(0);
+            p.setUpdatedAt(LocalDateTime.now());
+            return p;
+        });
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        when(timelineTaskRepository.findByProjectIdOrderByOrderIndexAscCreatedAtAsc(any())).thenReturn(List.of());
+        when(exportService.calculateStatus(any(Project.class), anyString()))
+                .thenReturn(new ExportStatusResponse(project.getId(), "docx", false, 0,
+                        List.of(), List.of(), 0, 0, 0));
+
+        ProjectDetailResponse response = projectService.update(project.getId(), request, user.getEmail());
+
+        assertThat(response.templateProfile()).isEqualTo("ABNT_GENERIC");
+    }
+
+    @Test
+    void shouldReturnTemplateProfileInFindAll() {
+        User user = buildUser();
+        Project project = Project.builder()
+                .id(UUID.randomUUID()).user(user).title("TCC")
+                .course("Direito").institution("FEMAF").norm(AcademicNorm.ABNT)
+                .templateProfile(AcademicTemplateType.FEMAF)
+                .status(ProjectStatus.IN_PROGRESS).chapters(new ArrayList<>()).build();
+
+        when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
+        when(projectRepository.findByUserIdOrderByCreatedAtDesc(user.getId()))
+                .thenReturn(List.of(project));
+
+        List<ProjectResponse> responses = projectService.findAll(user.getEmail());
+
+        assertThat(responses).hasSize(1);
+        assertThat(responses.get(0).templateProfile()).isEqualTo("FEMAF");
+    }
+
+    @Test
+    void shouldReturnTemplateProfileInFindById() {
+        User user = buildUser();
+        Project project = Project.builder()
+                .id(UUID.randomUUID()).user(user).title("TCC")
+                .course("Direito").institution("FEMAF").norm(AcademicNorm.ABNT)
+                .templateProfile(AcademicTemplateType.FEMAF)
+                .status(ProjectStatus.IN_PROGRESS).chapters(new ArrayList<>()).build();
+
+        when(userService.findEntityByEmail(user.getEmail())).thenReturn(user);
+        when(projectRepository.findByIdAndUserId(project.getId(), user.getId()))
+                .thenReturn(Optional.of(project));
+
+        ProjectResponse response = projectService.findById(project.getId(), user.getEmail());
+
+        assertThat(response.templateProfile()).isEqualTo("FEMAF");
     }
 }

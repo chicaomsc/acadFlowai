@@ -1,5 +1,6 @@
 package br.com.dwcore.acadflow_api.project.dto;
 
+import br.com.dwcore.acadflow_api.export.template.AcademicTemplateType;
 import br.com.dwcore.acadflow_api.project.domain.AcademicDegree;
 import br.com.dwcore.acadflow_api.project.domain.AcademicNorm;
 import jakarta.validation.constraints.NotBlank;
@@ -39,5 +40,6 @@ public record CreateProjectRequest(
         Integer defenseYear,
         String abstractPt,
         String abstractEn,
-        @Size(max = 500) String keywords
+        @Size(max = 500) String keywords,
+        AcademicTemplateType templateProfile
 ) {}

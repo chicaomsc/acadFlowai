@@ -2,6 +2,7 @@ export type UserRole = 'student' | 'advisor' | 'admin'
 export type UserPlan = 'free' | 'pro' | 'defense' | 'advisor' | 'institution'
 export type ProjectStatus = 'planning' | 'writing' | 'review' | 'defense' | 'completed'
 export type AcademicNorm = 'ABNT' | 'APA' | 'Vancouver'
+export type AcademicTemplateProfile = 'ABNT_GENERIC' | 'FEMAF'
 export type ChapterStatus = 'not_started' | 'writing' | 'review' | 'approved'
 export type ChapterType = 'introduction' | 'theoretical' | 'methodology' | 'results' | 'conclusion' | 'references'
 export type ReferenceType = 'article' | 'book' | 'website' | 'dissertation' | 'thesis' | 'other'
@@ -40,6 +41,7 @@ export interface Project {
   academicDegree?: string
   advisorId?: string
   norm: AcademicNorm
+  templateProfile: AcademicTemplateProfile
   deadline: Date
   status: ProjectStatus
   progress: number
@@ -106,6 +108,20 @@ export interface Citation {
   reference?: Reference
   createdAt?: Date
   updatedAt?: Date
+}
+
+export interface Figure {
+  id: string
+  projectId: string
+  chapterId: string
+  caption: string
+  sourceText?: string
+  originalFilename: string
+  mimeType: string
+  fileSizeBytes: number
+  widthPercent: 50 | 75 | 100
+  createdAt?: Date
+  imageUrl?: string
 }
 
 export interface TimelineTask {
@@ -222,6 +238,7 @@ export interface PDFDocument {
 export interface ExportConfig {
   format: ExportFormat
   norm: AcademicNorm
+  templateProfile?: AcademicTemplateProfile
   includeTableOfContents: boolean
   includeReferences: boolean
   includeAppendix: boolean

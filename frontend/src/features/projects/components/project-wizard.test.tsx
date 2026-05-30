@@ -31,11 +31,13 @@ describe('project wizard', () => {
     const textboxes = screen.getAllByRole('textbox')
     await user.type(textboxes[1], 'Subtítulo do projeto')
     const comboboxes = screen.getAllByRole('combobox')
-    await user.click(comboboxes[0])
+    await user.click(comboboxes[1])
     await user.click(await screen.findByRole('option', { name: 'ABNT' }))
     await user.click(comboboxes[2])
+    await user.click(await screen.findByRole('option', { name: 'ABNT Genérico' }))
+    await user.click(comboboxes[0])
     await user.click(await screen.findByRole('option', { name: 'Ciência da Computação' }))
-    await user.click(comboboxes[1])
+    await user.click(comboboxes[3])
     await user.click(await screen.findByRole('option', { name: 'Graduação' }))
     await user.type(textboxes[2], 'UFPE')
     await user.type(textboxes[3], 'Dra. Ana')
@@ -62,9 +64,38 @@ describe('project wizard', () => {
           defenseCity: 'Recife',
           defenseYear: 2026,
           norm: 'ABNT',
+          templateProfile: 'ABNT_GENERIC',
         }),
       )
       expect(router.state.location.pathname).toBe('/projects/project-2')
+    })
+  })
+
+  it('cria projeto com template FEMAF quando o usuário seleciona o modelo institucional', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/projects/new', element: <ProjectWizard /> }],
+      ['/projects/new'],
+    )
+
+    await user.type(screen.getByPlaceholderText(/inteligência artificial aplicada à educação/i), 'TCC FEMAF')
+
+    const comboboxes = screen.getAllByRole('combobox')
+    await user.click(comboboxes[2])
+    await user.click(await screen.findByRole('option', { name: 'FEMAF' }))
+
+    expect(screen.getByText(/regras institucionais de exportação do trabalho/i)).toBeInTheDocument()
+    expect(screen.getByText(/estrutura conforme padrão institucional FEMAF/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /criar projeto/i }))
+
+    await waitFor(() => {
+      expect(createProjectMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          templateProfile: 'FEMAF',
+        }),
+      )
     })
   })
 })

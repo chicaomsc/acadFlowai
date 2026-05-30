@@ -2,7 +2,8 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as citationService from '@/shared/services/citation.service'
-import { buildCitationAbntPreview, EditorPage, extractCitationIds } from '@/features/editor/pages/editor-page'
+import * as figureService from '@/shared/services/figure.service'
+import { buildCitationAbntPreview, EditorPage, extractCitationIds, extractFigureIds } from '@/features/editor/pages/editor-page'
 import { mockDb } from '@/shared/mocks/database'
 import { getChapter, updateChapterContent } from '@/shared/services/chapter.service'
 import { getChapterCitations } from '@/shared/services/citation.service'
@@ -26,6 +27,19 @@ describe('editor page', () => {
       updatedAt: new Date('2024-03-20'),
     })
     mockDb.references[1].hasCitation = true
+    mockDb.figures.splice(0, mockDb.figures.length, {
+      id: 'figure-1',
+      projectId: 'project-1',
+      chapterId: 'chapter-2',
+      caption: 'Arquitetura geral do sistema de tutoria inteligente',
+      sourceText: 'Elaboração própria.',
+      originalFilename: 'arquitetura-sti.png',
+      mimeType: 'image/png',
+      fileSizeBytes: 245760,
+      widthPercent: 75,
+      createdAt: new Date('2024-03-21'),
+      imageUrl: 'data:image/png;base64,mock',
+    })
     await updateChapterContent('chapter-1', 'A educação superior enfrenta desafios significativos no século XXI, especialmente no que diz respeito à personalização do ensino e ao acompanhamento individualizado dos estudantes. Nesse contexto, os Sistemas de Tutoria Inteligente emergem como uma solução promissora, combinando técnicas de Inteligência Artificial com teorias pedagógicas para oferecer experiências de aprendizagem adaptativas.\n\nEste trabalho propõe uma análise aprofundada sobre a aplicação de sistemas de tutoria inteligente no contexto da educação superior brasileira, investigando seus impactos no desempenho acadêmico e na experiência de aprendizagem dos estudantes.')
     await updateChapterContent('chapter-2', '2.1 Inteligência Artificial na Educação\n\nA aplicação de Inteligência Artificial na educação não é um fenômeno recente. Desde os primeiros sistemas especialistas da década de 1970, pesquisadores exploram formas de utilizar a tecnologia para personalizar e otimizar o processo de ensino-aprendizagem.\n\n2.2 Sistemas de Tutoria Inteligente\n\nOs Sistemas de Tutoria Inteligente são ambientes computacionais projetados para simular o comportamento de um tutor humano, oferecendo instrução personalizada e feedback adaptativo aos estudantes.')
     await updateChapterContent('chapter-3', '')
@@ -33,6 +47,10 @@ describe('editor page', () => {
 
   it('extrai ids de citações a partir dos marcadores no texto', () => {
     expect(extractCitationIds('Texto [[@CITE:citation-1]] e [[@CITE:abc-123]].')).toEqual(['citation-1', 'abc-123'])
+  })
+
+  it('extrai ids de figuras a partir dos marcadores no texto', () => {
+    expect(extractFigureIds('Texto [[@FIG:figure-1]] e [[@FIG:fig-abc]].')).toEqual(['figure-1', 'fig-abc'])
   })
 
   it('renderiza inline citação narrativa como Silva (2024)', () => {
@@ -226,6 +244,144 @@ describe('editor page', () => {
     })
   })
 
+  it('valida campos obrigatórios no modal de figura', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Introdução' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /inserir figura/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir figura' })
+    await user.click(within(dialog).getByRole('button', { name: /^inserir figura$/i }))
+
+    expect(await within(dialog).findByText(/selecione uma imagem/i)).toBeInTheDocument()
+  })
+
+  it('insere figura com marcador bruto e renderiza preview visual inline', async () => {
+    const user = userEvent.setup()
+    const file = new File(['figure'], 'fluxograma.png', { type: 'image/png' })
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Introdução' })).toBeInTheDocument()
+
+    const editor = screen.getByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(editor)
+    range.collapse(false)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+
+    await user.click(screen.getByRole('button', { name: /inserir figura/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir figura' })
+    await user.upload(within(dialog).getByLabelText('Upload da imagem da figura'), file)
+    await user.type(within(dialog).getByPlaceholderText('Ex.: Arquitetura geral do sistema'), 'Fluxograma do processo')
+    await user.click(within(dialog).getByRole('button', { name: /^inserir figura$/i }))
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toMatch(/\[\[@FIG:figure-\d+\]\]/)
+    })
+
+    expect(editor.textContent).toContain('Figura 1 – Fluxograma do processo')
+    const image = within(editor).getByRole('img', { name: 'Fluxograma do processo' })
+    expect(image).toBeInTheDocument()
+    expect(image.getAttribute('src')).toMatch(/^(blob:|data:image)/)
+    expect(editor.textContent).toContain('Fonte: não informada.')
+  })
+
+  it('insere figura entre dois trechos preservando texto antes e depois', async () => {
+    const user = userEvent.setup()
+    const file = new File(['figure'], 'fluxograma.png', { type: 'image/png' })
+    await updateChapterContent('chapter-1', 'Texto antesTexto depois')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+
+    const textNode = editor.firstChild
+    const selection = window.getSelection()
+    const range = document.createRange()
+    expect(textNode?.nodeType).toBe(Node.TEXT_NODE)
+    range.setStart(textNode as Text, 'Texto antes'.length)
+    range.collapse(true)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+
+    await user.click(screen.getByRole('button', { name: /inserir figura/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir figura' })
+    await user.upload(within(dialog).getByLabelText('Upload da imagem da figura'), file)
+    await user.type(within(dialog).getByPlaceholderText('Ex.: Arquitetura geral do sistema'), 'Figura entre trechos')
+    await user.click(within(dialog).getByRole('button', { name: /^inserir figura$/i }))
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toMatch(/^Texto antes\n\n\[\[@FIG:figure-\d+\]\]\n\nTexto depois$/)
+    })
+  })
+
+  it('devolve o foco ao editor após inserir a figura sem perder o texto seguinte', async () => {
+    const user = userEvent.setup()
+    const file = new File(['figure'], 'fluxograma.png', { type: 'image/png' })
+    await updateChapterContent('chapter-1', 'Texto antesTexto depois')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+
+    const textNode = editor.firstChild
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.setStart(textNode as Text, 'Texto antes'.length)
+    range.collapse(true)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+
+    await user.click(screen.getByRole('button', { name: /inserir figura/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir figura' })
+    await user.upload(within(dialog).getByLabelText('Upload da imagem da figura'), file)
+    await user.type(within(dialog).getByPlaceholderText('Ex.: Arquitetura geral do sistema'), 'Figura com continuação')
+    await user.click(within(dialog).getByRole('button', { name: /^inserir figura$/i }))
+
+    await waitFor(() => {
+      expect(editor.textContent).toContain('Figura 1 – Figura com continuação')
+    })
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(editor)
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toMatch(/^Texto antes\n\n\[\[@FIG:figure-\d+\]\]\n\nTexto depois$/)
+    })
+  })
+
   it('renderiza a citação inline com autor e ano reais', async () => {
     const user = userEvent.setup()
 
@@ -303,6 +459,133 @@ describe('editor page', () => {
     })
   })
 
+  it('mostra fallback quando a figura não é encontrada', async () => {
+    await updateChapterContent('chapter-3', 'Texto com marcador órfão [[@FIG:missing-figure]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-3'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Metodologia' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Editor do capítulo' }).textContent).toContain('Figura indisponível')
+    })
+  })
+
+  it('reload reconstrói o preview visual da figura a partir do marcador', async () => {
+    await updateChapterContent('chapter-3', 'Texto antes.\n\n[[@FIG:figure-1]]\n\nTexto depois.')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-3'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    const image = within(editor).getByRole('img', { name: 'Arquitetura geral do sistema de tutoria inteligente' })
+    expect(image).toBeInTheDocument()
+    expect(image.getAttribute('src')).toBe('data:image/png;base64,mock')
+    expect(editor.textContent).toContain('Figura 1 – Arquitetura geral do sistema de tutoria inteligente')
+    expect(editor.textContent).toContain('Fonte: Elaboração própria.')
+  })
+
+  it('carrega a imagem da figura via service ao reconstruir preview sem imageUrl pré-resolvida', async () => {
+    vi.spyOn(figureService, 'getFigureImage').mockResolvedValue('blob:figure-preview')
+    mockDb.figures[0].imageUrl = undefined
+    await updateChapterContent('chapter-3', 'Texto antes.\n\n[[@FIG:figure-1]]\n\nTexto depois.')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-3'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await waitFor(() => {
+      const image = within(editor).getByRole('img', { name: 'Arquitetura geral do sistema de tutoria inteligente' })
+      expect(image.getAttribute('src')).toBe('blob:figure-preview')
+    })
+
+    expect(figureService.getFigureImage).toHaveBeenCalledWith('project-1', 'figure-1')
+  })
+
+  it('aplica widthPercent na largura visual do preview da figura', async () => {
+    await updateChapterContent('chapter-1', 'Texto com [[@FIG:figure-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    const image = within(editor).getByRole('img', { name: 'Arquitetura geral do sistema de tutoria inteligente' })
+    const frame = image.closest('figure')?.firstElementChild as HTMLElement | null
+
+    expect(frame).not.toBeNull()
+    expect(frame?.style.width).toBe('75%')
+  })
+
+  it('serializa o preview de figura de volta para o marcador bruto', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@FIG:figure-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    expect(editor.textContent).toContain('Figura 1 – Arquitetura geral do sistema de tutoria inteligente')
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain('[[@FIG:figure-1]]')
+    })
+  })
+
+  it('serializa figura preservando o texto depois do bloco', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto antes\n\n[[@FIG:figure-1]]\n\nTexto depois.')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toBe('Texto antes\n\n[[@FIG:figure-1]]\n\nTexto depois.')
+    })
+  })
+
+  it('remover o marcador do texto remove o preview visual da figura', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@FIG:figure-1]] para edição.')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    expect(within(editor).getByRole('img', { name: 'Arquitetura geral do sistema de tutoria inteligente' })).toBeInTheDocument()
+
+    await user.clear(editor)
+    await user.type(editor, 'Texto sem preview de figura.')
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toBe('Texto sem preview de figura.')
+    })
+
+    expect(within(editor).queryByRole('img', { name: 'Arquitetura geral do sistema de tutoria inteligente' })).not.toBeInTheDocument()
+  })
+
   it('citação cadastrada sem marcador não conta no pós-textual', async () => {
     await updateChapterContent('chapter-2', 'Fundamentação sem citações.')
 
@@ -329,6 +612,44 @@ describe('editor page', () => {
     expect(screen.queryByText(/The relative effectiveness of human tutoring/i)).not.toBeInTheDocument()
   })
 
+  it('lista apenas figuras usadas no pós-textual', async () => {
+    await updateChapterContent('chapter-2', 'Fundamentação com [[@FIG:figure-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/figures'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Lista de figuras' })).toBeInTheDocument()
+    expect(screen.getByText(/Figura 1 – Arquitetura geral do sistema de tutoria inteligente/i)).toBeInTheDocument()
+  })
+
+  it('renderiza múltiplas figuras no mesmo capítulo preservando a ordem dos marcadores', async () => {
+    mockDb.figures.push({
+      id: 'figure-2',
+      projectId: 'project-1',
+      chapterId: 'chapter-1',
+      caption: 'Fluxo editorial do capítulo',
+      sourceText: 'Acervo da pesquisa.',
+      originalFilename: 'fluxo-editorial.jpg',
+      mimeType: 'image/jpeg',
+      fileSizeBytes: 120000,
+      widthPercent: 50,
+      createdAt: new Date('2024-03-22'),
+      imageUrl: 'data:image/png;base64,mock-2',
+    })
+    await updateChapterContent('chapter-1', '[[@FIG:figure-2]]\n\n[[@FIG:figure-1]]')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    const text = editor.textContent ?? ''
+    expect(text.indexOf('Figura 1 – Fluxo editorial do capítulo')).toBeLessThan(text.indexOf('Figura 2 – Arquitetura geral do sistema de tutoria inteligente'))
+  })
+
   it('não chama DELETE automaticamente quando o marcador some do texto', async () => {
     const user = userEvent.setup()
     const deleteSpy = vi.spyOn(citationService, 'deleteCitation')
@@ -348,6 +669,30 @@ describe('editor page', () => {
     await waitFor(async () => {
       const updatedChapter = await getChapter('chapter-1')
       expect(updatedChapter?.content).toBe('Texto sem citação.')
+    })
+
+    expect(deleteSpy).not.toHaveBeenCalled()
+  })
+
+  it('não chama DELETE de figura automaticamente quando o marcador some do texto', async () => {
+    const user = userEvent.setup()
+    const deleteSpy = vi.spyOn(figureService, 'deleteFigure')
+
+    await updateChapterContent('chapter-1', 'Texto com [[@FIG:figure-1]] para edição.')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.clear(editor)
+    await user.type(editor, 'Texto sem figura.')
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toBe('Texto sem figura.')
     })
 
     expect(deleteSpy).not.toHaveBeenCalled()

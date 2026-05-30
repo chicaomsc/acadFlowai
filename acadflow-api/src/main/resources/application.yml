@@ -35,6 +35,9 @@ app:
     expiration: ${JWT_EXPIRATION:86400000}
   export:
     dir: ${EXPORT_DIR:${java.io.tmpdir}/acadflow/exports}
+  figures:
+    dir: ${FIGURES_DIR:${java.io.tmpdir}/acadflow/figures}
+    max-size-mb: ${FIGURES_MAX_SIZE_MB:10}
   rate-limit:
     max-requests: ${RATE_LIMIT_MAX_REQUESTS:10}
     window-ms: ${RATE_LIMIT_WINDOW_MS:60000}
