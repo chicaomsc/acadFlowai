@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as citationService from '@/shared/services/citation.service'
 import * as figureService from '@/shared/services/figure.service'
-import { buildCitationAbntPreview, EditorPage, extractCitationIds, extractFigureIds } from '@/features/editor/pages/editor-page'
+import * as tableService from '@/shared/services/table.service'
+import { buildCitationAbntPreview, EditorPage, extractCitationIds, extractFigureIds, extractQuadroIds, extractTableIds, validateTabularElementForm } from '@/features/editor/pages/editor-page'
 import { mockDb } from '@/shared/mocks/database'
 import { getChapter, updateChapterContent } from '@/shared/services/chapter.service'
 import { getChapterCitations } from '@/shared/services/citation.service'
@@ -40,6 +41,36 @@ describe('editor page', () => {
       createdAt: new Date('2024-03-21'),
       imageUrl: 'data:image/png;base64,mock',
     })
+    mockDb.tabularElements.splice(0, mockDb.tabularElements.length,
+      {
+        id: 'table-1',
+        projectId: 'project-1',
+        chapterId: 'chapter-2',
+        kind: 'table',
+        title: 'Distribuição de estudos por período',
+        sourceText: 'Elaboração própria.',
+        rows: [
+          ['Período', 'Quantidade de estudos'],
+          ['2015-2019', '12'],
+          ['2020-2024', '21'],
+        ],
+        createdAt: new Date('2024-03-21'),
+      },
+      {
+        id: 'quadro-1',
+        projectId: 'project-1',
+        chapterId: 'chapter-2',
+        kind: 'quadro',
+        title: 'Síntese dos critérios de análise',
+        sourceText: 'Adaptado do protocolo da pesquisa.',
+        rows: [
+          ['Critério', 'Descrição'],
+          ['Personalização', 'Nível de adaptação ao estudante'],
+          ['Feedback', 'Tempo e especificidade da resposta'],
+        ],
+        createdAt: new Date('2024-03-22'),
+      },
+    )
     await updateChapterContent('chapter-1', 'A educação superior enfrenta desafios significativos no século XXI, especialmente no que diz respeito à personalização do ensino e ao acompanhamento individualizado dos estudantes. Nesse contexto, os Sistemas de Tutoria Inteligente emergem como uma solução promissora, combinando técnicas de Inteligência Artificial com teorias pedagógicas para oferecer experiências de aprendizagem adaptativas.\n\nEste trabalho propõe uma análise aprofundada sobre a aplicação de sistemas de tutoria inteligente no contexto da educação superior brasileira, investigando seus impactos no desempenho acadêmico e na experiência de aprendizagem dos estudantes.')
     await updateChapterContent('chapter-2', '2.1 Inteligência Artificial na Educação\n\nA aplicação de Inteligência Artificial na educação não é um fenômeno recente. Desde os primeiros sistemas especialistas da década de 1970, pesquisadores exploram formas de utilizar a tecnologia para personalizar e otimizar o processo de ensino-aprendizagem.\n\n2.2 Sistemas de Tutoria Inteligente\n\nOs Sistemas de Tutoria Inteligente são ambientes computacionais projetados para simular o comportamento de um tutor humano, oferecendo instrução personalizada e feedback adaptativo aos estudantes.')
     await updateChapterContent('chapter-3', '')
@@ -51,6 +82,18 @@ describe('editor page', () => {
 
   it('extrai ids de figuras a partir dos marcadores no texto', () => {
     expect(extractFigureIds('Texto [[@FIG:figure-1]] e [[@FIG:fig-abc]].')).toEqual(['figure-1', 'fig-abc'])
+  })
+
+  it('extrai ids de tabelas e quadros a partir dos marcadores no texto', () => {
+    expect(extractTableIds('Texto [[@TABLE:table-1]] e [[@TABLE:table-abc]].')).toEqual(['table-1', 'table-abc'])
+    expect(extractQuadroIds('Texto [[@QUADRO:quadro-1]] e [[@QUADRO:quadro-abc]].')).toEqual(['quadro-1', 'quadro-abc'])
+  })
+
+  it('valida grade de tabela/quadro exigindo cabeçalhos e pelo menos uma linha com conteúdo', () => {
+    expect(validateTabularElementForm([['', ''], ['', '']]).valid).toBe(false)
+    expect(validateTabularElementForm([['Coluna 1', 'Coluna 2']]).valid).toBe(false)
+    expect(validateTabularElementForm([['Coluna 1', 'Coluna 2'], ['', '']]).valid).toBe(false)
+    expect(validateTabularElementForm([['Coluna 1', 'Coluna 2'], ['A', '']]).valid).toBe(true)
   })
 
   it('renderiza inline citação narrativa como Silva (2024)', () => {
@@ -302,6 +345,321 @@ describe('editor page', () => {
     expect(editor.textContent).toContain('Fonte: não informada.')
   })
 
+  it('insere tabela com marcador bruto e renderiza preview visual inline', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir tabela/quadro' })
+    await user.type(within(dialog).getByPlaceholderText('Ex.: Distribuição dos resultados por turma'), 'Resultados por semestre')
+    await user.clear(within(dialog).getByPlaceholderText('Cabeçalho 1'))
+    await user.type(within(dialog).getByPlaceholderText('Cabeçalho 1'), 'Semestre')
+    await user.clear(within(dialog).getByPlaceholderText('Cabeçalho 2'))
+    await user.type(within(dialog).getByPlaceholderText('Cabeçalho 2'), 'Resultados')
+    await user.type(within(dialog).getByPlaceholderText('Célula 2.1'), '2025.1')
+    await user.type(within(dialog).getByPlaceholderText('Célula 2.2'), '18')
+    await user.click(within(dialog).getByRole('button', { name: /^inserir tabela$/i }))
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toMatch(/\[\[@TABLE:table-\d+\]\]/)
+    })
+
+    expect(screen.queryByText(/type é obrigatório/i)).not.toBeInTheDocument()
+    expect(editor.textContent).toContain('Tabela 1 – Resultados por semestre')
+    expect(within(editor).getByText('Semestre')).toBeInTheDocument()
+    expect(within(editor).getByText('2025.1')).toBeInTheDocument()
+  })
+
+  it('insere quadro com marcador bruto e renderiza preview visual inline', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir tabela/quadro' })
+    await user.click(within(dialog).getByRole('button', { name: /quadro/i }))
+    await user.type(within(dialog).getByPlaceholderText('Ex.: Síntese dos critérios analisados'), 'Critérios de avaliação')
+    await user.type(within(dialog).getByPlaceholderText('Ex.: Elaboração própria.'), 'Elaboração própria.')
+    await user.type(within(dialog).getByPlaceholderText('Célula 2.1'), 'Aderência')
+    await user.type(within(dialog).getByPlaceholderText('Célula 2.2'), 'Alta')
+    await user.click(within(dialog).getByRole('button', { name: /^inserir quadro$/i }))
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toMatch(/\[\[@QUADRO:quadro-\d+\]\]/)
+    })
+
+    expect(editor.textContent).toContain('Quadro 1 – Critérios de avaliação')
+    expect(within(editor).getByText('Aderência')).toBeInTheDocument()
+    expect(within(editor).getByText('Alta')).toBeInTheDocument()
+  })
+
+  it('renderiza imediatamente a tabela recém-criada sem fallback usando o id retornado pela API', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(tableService, 'createTabularElement').mockResolvedValue({
+      id: 'table-api-1',
+      projectId: 'project-1',
+      chapterId: 'chapter-1',
+      kind: 'table',
+      title: 'Tabela vinda da API',
+      sourceText: 'Elaboração própria.',
+      rows: [
+        ['Coluna A', 'Coluna B'],
+        ['Valor 1', 'Valor 2'],
+      ],
+    })
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir tabela/quadro' })
+    await user.type(within(dialog).getByPlaceholderText('Ex.: Distribuição dos resultados por turma'), 'Tabela vinda da API')
+    await user.clear(within(dialog).getByPlaceholderText('Cabeçalho 1'))
+    await user.type(within(dialog).getByPlaceholderText('Cabeçalho 1'), 'Coluna A')
+    await user.clear(within(dialog).getByPlaceholderText('Cabeçalho 2'))
+    await user.type(within(dialog).getByPlaceholderText('Cabeçalho 2'), 'Coluna B')
+    await user.type(within(dialog).getByPlaceholderText('Célula 2.1'), 'Valor 1')
+    await user.type(within(dialog).getByPlaceholderText('Célula 2.2'), 'Valor 2')
+    await user.click(within(dialog).getByRole('button', { name: /^inserir tabela$/i }))
+
+    expect(editor.textContent).toContain('Tabela 1 – Tabela vinda da API')
+    expect(editor.textContent).not.toContain('Tabela removida ou inválida')
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain('[[@TABLE:table-api-1]]')
+    })
+  })
+
+  it('renderiza imediatamente o quadro recém-criado sem fallback usando o id retornado pela API', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(tableService, 'createTabularElement').mockResolvedValue({
+      id: 'quadro-api-1',
+      projectId: 'project-1',
+      chapterId: 'chapter-1',
+      kind: 'quadro',
+      title: 'Quadro vindo da API',
+      sourceText: 'Adaptado pelo autor.',
+      rows: [
+        ['Critério', 'Descrição'],
+        ['Escopo', 'Visão consolidada'],
+      ],
+    })
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir tabela/quadro' })
+    await user.click(within(dialog).getByRole('button', { name: /quadro/i }))
+    await user.type(within(dialog).getByPlaceholderText('Ex.: Síntese dos critérios analisados'), 'Quadro vindo da API')
+    await user.clear(within(dialog).getByPlaceholderText('Cabeçalho 1'))
+    await user.type(within(dialog).getByPlaceholderText('Cabeçalho 1'), 'Critério')
+    await user.clear(within(dialog).getByPlaceholderText('Cabeçalho 2'))
+    await user.type(within(dialog).getByPlaceholderText('Cabeçalho 2'), 'Descrição')
+    await user.type(within(dialog).getByPlaceholderText('Célula 2.1'), 'Escopo')
+    await user.type(within(dialog).getByPlaceholderText('Célula 2.2'), 'Visão consolidada')
+    await user.click(within(dialog).getByRole('button', { name: /^inserir quadro$/i }))
+
+    expect(editor.textContent).toContain('Quadro 1 – Quadro vindo da API')
+    expect(editor.textContent).not.toContain('Quadro removido ou inválido')
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain('[[@QUADRO:quadro-api-1]]')
+    })
+  })
+
+  it('mostra mensagem útil quando a criação de tabela/quadro retorna 404', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(tableService, 'createTabularElement').mockRejectedValue(
+      new Error('Não foi possível criar a tabela/quadro. Verifique se o projeto e o capítulo ainda existem.'),
+    )
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir tabela/quadro' })
+    await user.type(within(dialog).getByPlaceholderText('Ex.: Distribuição dos resultados por turma'), 'Resultados')
+    await user.clear(within(dialog).getByPlaceholderText('Cabeçalho 1'))
+    await user.type(within(dialog).getByPlaceholderText('Cabeçalho 1'), 'Coluna A')
+    await user.clear(within(dialog).getByPlaceholderText('Cabeçalho 2'))
+    await user.type(within(dialog).getByPlaceholderText('Cabeçalho 2'), 'Coluna B')
+    await user.type(within(dialog).getByPlaceholderText('Célula 2.1'), 'Valor 1')
+    await user.type(within(dialog).getByPlaceholderText('Célula 2.2'), 'Valor 2')
+    await user.click(within(dialog).getByRole('button', { name: /^inserir tabela$/i }))
+
+    expect(await within(dialog).findByText('Não foi possível criar a tabela/quadro. Verifique se o projeto e o capítulo ainda existem.')).toBeInTheDocument()
+  })
+
+  it('valida controles de grade para adicionar e remover linha e coluna', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir tabela/quadro' })
+    expect(within(dialog).getByTestId('tabular-grid-toolbar')).toBeInTheDocument()
+    expect(within(dialog).getAllByPlaceholderText(/Cabeçalho|Célula/)).toHaveLength(4)
+
+    await user.click(within(dialog).getByRole('button', { name: /\+ linha/i }))
+    expect(within(dialog).getAllByPlaceholderText(/Cabeçalho|Célula/)).toHaveLength(6)
+
+    await user.click(within(dialog).getByRole('button', { name: /\+ coluna/i }))
+    expect(within(dialog).getAllByPlaceholderText(/Cabeçalho|Célula/)).toHaveLength(9)
+
+    await user.click(within(dialog).getByRole('button', { name: /- linha/i }))
+    expect(within(dialog).getAllByPlaceholderText(/Cabeçalho|Célula/)).toHaveLength(6)
+
+    await user.click(within(dialog).getByRole('button', { name: /- coluna/i }))
+    expect(within(dialog).getAllByPlaceholderText(/Cabeçalho|Célula/)).toHaveLength(4)
+  })
+
+  it('impede submit de tabela vazia e destaca a grade inválida', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir tabela/quadro' })
+    await user.type(within(dialog).getByPlaceholderText('Ex.: Distribuição dos resultados por turma'), 'Tabela inválida')
+    expect(within(dialog).getByRole('button', { name: /^inserir tabela$/i })).toBeDisabled()
+  })
+
+  it('mantém body rolável e footer visível no modal de tabela', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByTestId('tabular-modal')
+    const body = within(dialog).getByTestId('tabular-modal-body')
+    const footer = within(dialog).getByTestId('tabular-modal-footer')
+
+    expect(dialog.className).toContain('w-[min(90vw,860px)]')
+    expect(dialog.className).toContain('max-w-[860px]')
+    expect(dialog.className).toContain('max-h-[90vh]')
+    expect(body.className).toContain('overflow-y-auto')
+    expect(footer).toBeVisible()
+    expect(within(footer).getByRole('button', { name: /cancelar/i })).toBeVisible()
+    expect(within(footer).getByRole('button', { name: /inserir tabela/i })).toBeVisible()
+  })
+
+  it('renderiza tipo, título, fonte, grade e preview em ordem no modal único', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir tabela/quadro' })
+    const stack = within(dialog).getByTestId('tabular-modal-stack')
+    const toolbar = within(dialog).getByTestId('tabular-grid-toolbar')
+    const scroller = within(dialog).getByTestId('tabular-grid-scroller')
+    const preview = within(dialog).getByTestId('tabular-preview-card')
+
+    expect(stack).toContainElement(within(dialog).getByText('Tipo'))
+    expect(stack).toContainElement(within(dialog).getByPlaceholderText('Ex.: Distribuição dos resultados por turma'))
+    expect(stack).toContainElement(within(dialog).getByPlaceholderText('Ex.: Elaboração própria.'))
+    expect(stack).toContainElement(toolbar)
+    expect(stack).toContainElement(scroller)
+    expect(stack).toContainElement(preview)
+    expect(preview.className).not.toContain('sticky')
+    expect(preview.className).not.toContain('absolute')
+  })
+
+  it('toolbar mostra apenas um botão para tabela/quadro e o modal abre com tabela por padrão', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    expect(screen.getAllByRole('button', { name: /inserir tabela\/quadro/i })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: /^inserir tabela$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^inserir quadro$/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir tabela/quadro' })
+    expect(within(dialog).getByRole('button', { name: /^inserir tabela$/i })).toBeInTheDocument()
+  })
+
+  it('selecionar quadro muda preview e botão final no modal único', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(screen.getByRole('button', { name: /inserir tabela\/quadro/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir tabela/quadro' })
+    await user.click(within(dialog).getByRole('button', { name: /quadro/i }))
+
+    expect(within(dialog).getByRole('button', { name: /^inserir quadro$/i })).toBeInTheDocument()
+    expect(within(dialog).getByText(/quadro 1/i)).toBeInTheDocument()
+  })
+
   it('insere figura entre dois trechos preservando texto antes e depois', async () => {
     const user = userEvent.setup()
     const file = new File(['figure'], 'fluxograma.png', { type: 'image/png' })
@@ -473,6 +831,34 @@ describe('editor page', () => {
     })
   })
 
+  it('mostra fallback quando a tabela não é encontrada', async () => {
+    await updateChapterContent('chapter-3', 'Texto com marcador órfão [[@TABLE:missing-table]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-3'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Metodologia' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Editor do capítulo' }).textContent).toContain('Tabela removida ou inválida')
+    })
+  })
+
+  it('mostra fallback quando o quadro não é encontrado', async () => {
+    await updateChapterContent('chapter-3', 'Texto com marcador órfão [[@QUADRO:missing-quadro]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-3'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Metodologia' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Editor do capítulo' }).textContent).toContain('Quadro removido ou inválido')
+    })
+  })
+
   it('reload reconstrói o preview visual da figura a partir do marcador', async () => {
     await updateChapterContent('chapter-3', 'Texto antes.\n\n[[@FIG:figure-1]]\n\nTexto depois.')
 
@@ -487,6 +873,115 @@ describe('editor page', () => {
     expect(image.getAttribute('src')).toBe('data:image/png;base64,mock')
     expect(editor.textContent).toContain('Figura 1 – Arquitetura geral do sistema de tutoria inteligente')
     expect(editor.textContent).toContain('Fonte: Elaboração própria.')
+  })
+
+  it('reload reconstrói o preview visual de tabela e quadro a partir dos marcadores', async () => {
+    await updateChapterContent('chapter-3', 'Texto antes.\n\n[[@TABLE:table-1]]\n\n[[@QUADRO:quadro-1]]\n\nTexto depois.')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-3'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    expect(editor.textContent).toContain('Tabela 1 – Distribuição de estudos por período')
+    expect(editor.textContent).toContain('Quadro 1 – Síntese dos critérios de análise')
+    expect(within(editor).getByText('Período')).toBeInTheDocument()
+    expect(within(editor).getByText('Critério')).toBeInTheDocument()
+  })
+
+  it('mantém ordem e numeração independentes para tabelas e quadros nos pós-textuais', async () => {
+    mockDb.tabularElements.push(
+      {
+        id: 'table-2',
+        projectId: 'project-1',
+        chapterId: 'chapter-1',
+        kind: 'table',
+        title: 'Resultados por grupo',
+        sourceText: 'Base da pesquisa.',
+        rows: [['Grupo', 'Valor'], ['A', '10']],
+        createdAt: new Date('2024-03-23'),
+      },
+      {
+        id: 'quadro-2',
+        projectId: 'project-1',
+        chapterId: 'chapter-1',
+        kind: 'quadro',
+        title: 'Categorias de análise',
+        sourceText: 'Roteiro metodológico.',
+        rows: [['Categoria', 'Descrição'], ['C1', 'Teste']],
+        createdAt: new Date('2024-03-24'),
+      },
+    )
+    await updateChapterContent('chapter-2', 'Texto [[@TABLE:table-1]] e [[@QUADRO:quadro-1]].')
+    await updateChapterContent('chapter-1', 'Texto [[@TABLE:table-2]] e [[@QUADRO:quadro-2]].')
+
+    const { unmount } = renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/tables'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Lista de tabelas' })).toBeInTheDocument()
+    expect(screen.getByText('Tabela 1 – Resultados por grupo')).toBeInTheDocument()
+    expect(screen.getByText('Tabela 2 – Distribuição de estudos por período')).toBeInTheDocument()
+
+    unmount()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/quadros'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Lista de quadros' })).toBeInTheDocument()
+    expect(screen.getByText('Quadro 1 – Categorias de análise')).toBeInTheDocument()
+    expect(screen.getByText('Quadro 2 – Síntese dos critérios de análise')).toBeInTheDocument()
+  })
+
+  it('listas de tabelas e quadros mostram apenas elementos usados no texto', async () => {
+    await updateChapterContent('chapter-2', 'Fundamentação com [[@TABLE:table-1]] e [[@QUADRO:quadro-1]].')
+
+    mockDb.tabularElements.push(
+      {
+        id: 'table-unused',
+        projectId: 'project-1',
+        chapterId: 'chapter-2',
+        kind: 'table',
+        title: 'Tabela não citada',
+        sourceText: 'Rascunho.',
+        rows: [['A', 'B'], ['1', '2']],
+        createdAt: new Date('2024-03-25'),
+      },
+      {
+        id: 'quadro-unused',
+        projectId: 'project-1',
+        chapterId: 'chapter-2',
+        kind: 'quadro',
+        title: 'Quadro não citado',
+        sourceText: 'Rascunho.',
+        rows: [['A', 'B'], ['1', '2']],
+        createdAt: new Date('2024-03-25'),
+      },
+    )
+
+    const { unmount } = renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/tables'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Lista de tabelas' })).toBeInTheDocument()
+    expect(screen.getByText('Tabela 1 – Distribuição de estudos por período')).toBeInTheDocument()
+    expect(screen.queryByText('Tabela não citada')).not.toBeInTheDocument()
+
+    unmount()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/quadros'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Lista de quadros' })).toBeInTheDocument()
+    expect(screen.getByText('Quadro 1 – Síntese dos critérios de análise')).toBeInTheDocument()
+    expect(screen.queryByText('Quadro não citado')).not.toBeInTheDocument()
   })
 
   it('carrega a imagem da figura via service ao reconstruir preview sem imageUrl pré-resolvida', async () => {
@@ -541,6 +1036,25 @@ describe('editor page', () => {
     await waitFor(async () => {
       const updatedChapter = await getChapter('chapter-1')
       expect(updatedChapter?.content).toContain('[[@FIG:figure-1]]')
+    })
+  })
+
+  it('serializa o preview de tabela e quadro de volta para os marcadores brutos', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto.\n\n[[@TABLE:table-1]]\n\n[[@QUADRO:quadro-1]]')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain('[[@TABLE:table-1]]')
+      expect(updatedChapter?.content).toContain('[[@QUADRO:quadro-1]]')
     })
   })
 
@@ -693,6 +1207,30 @@ describe('editor page', () => {
     await waitFor(async () => {
       const updatedChapter = await getChapter('chapter-1')
       expect(updatedChapter?.content).toBe('Texto sem figura.')
+    })
+
+    expect(deleteSpy).not.toHaveBeenCalled()
+  })
+
+  it('não chama DELETE de tabela ou quadro automaticamente quando o marcador some do texto', async () => {
+    const user = userEvent.setup()
+    const deleteSpy = vi.spyOn(tableService, 'deleteTabularElement')
+
+    await updateChapterContent('chapter-1', 'Texto com [[@TABLE:table-1]] e [[@QUADRO:quadro-1]] para edição.')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.clear(editor)
+    await user.type(editor, 'Texto sem elementos tabulares.')
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toBe('Texto sem elementos tabulares.')
     })
 
     expect(deleteSpy).not.toHaveBeenCalled()

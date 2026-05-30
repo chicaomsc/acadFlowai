@@ -13,6 +13,8 @@ public final class AcademicTemplateRegistry {
             "Abstract",
             "Sumário",
             "LISTA DE FIGURAS",
+            "LISTA DE TABELAS",
+            "LISTA DE QUADROS",
             "Referências",
             "Trabalho apresentado ao curso de {course} da {institution} "
                     + "como requisito parcial para a obtenção do grau de {degree}."
@@ -25,6 +27,8 @@ public final class AcademicTemplateRegistry {
             "Abstract",
             "Sumário",
             "LISTA DE FIGURAS",
+            "LISTA DE TABELAS",
+            "LISTA DE QUADROS",
             "Referências",
             "Monografia apresentada ao Curso de {course} da {institution} "
                     + "como requisito parcial para obtenção do título de {degree}."

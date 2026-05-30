@@ -36,6 +36,7 @@ public final class DocxHelper {
     public static final String STYLE_CAPTION      = "ABNTCaption";
     public static final String STYLE_QUOTE        = "ABNTQuoteLong";
     public static final String STYLE_REF          = "ABNTReference";
+    public static final String STYLE_TABLE        = "ABNTTable";
 
     // ── Page layout — A4 portrait, ABNT NBR 14724:2011 margins ───────────────
     // Twips = twentieths of a point; 1 cm = 566.93 twips ≈ 567.

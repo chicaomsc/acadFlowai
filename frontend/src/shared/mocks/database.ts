@@ -11,6 +11,7 @@ import type {
   Plan,
   Project,
   Reference,
+  TabularElement,
   TimelineTask,
   User,
   WeeklyProgress,
@@ -23,6 +24,7 @@ export interface MockDatabase {
   chapters: Chapter[]
   citations: Citation[]
   figures: Figure[]
+  tabularElements: TabularElement[]
   references: Reference[]
   timelineTasks: TimelineTask[]
   advisorComments: AdvisorComment[]
@@ -200,6 +202,37 @@ const figures: Figure[] = [
     widthPercent: 75,
     createdAt: new Date('2024-03-21'),
     imageUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480"><rect width="100%25" height="100%25" fill="%23eef2ff"/><text x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" fill="%23475569" font-family="Arial" font-size="28">Figura mock</text></svg>',
+  },
+]
+
+const tabularElements: TabularElement[] = [
+  {
+    id: 'table-1',
+    projectId: 'project-1',
+    chapterId: 'chapter-2',
+    kind: 'table',
+    title: 'Distribuição de estudos por período',
+    sourceText: 'Elaboração própria.',
+    rows: [
+      ['Período', 'Quantidade de estudos'],
+      ['2015-2019', '12'],
+      ['2020-2024', '21'],
+    ],
+    createdAt: new Date('2024-03-21'),
+  },
+  {
+    id: 'quadro-1',
+    projectId: 'project-1',
+    chapterId: 'chapter-2',
+    kind: 'quadro',
+    title: 'Síntese dos critérios de análise',
+    sourceText: 'Adaptado do protocolo da pesquisa.',
+    rows: [
+      ['Critério', 'Descrição'],
+      ['Personalização', 'Nível de adaptação ao estudante'],
+      ['Feedback', 'Tempo e especificidade da resposta'],
+    ],
+    createdAt: new Date('2024-03-22'),
   },
 ]
 
@@ -553,6 +586,7 @@ export const mockDb: MockDatabase = {
   chapters,
   citations,
   figures,
+  tabularElements,
   references,
   timelineTasks,
   advisorComments,

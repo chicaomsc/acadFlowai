@@ -1,5 +1,7 @@
 package br.com.dwcore.acadflow_api.export.service;
 
+import br.com.dwcore.acadflow_api.academictable.domain.AcademicTable;
+import br.com.dwcore.acadflow_api.academictable.repository.AcademicTableRepository;
 import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
 import br.com.dwcore.acadflow_api.chapter.repository.ChapterRepository;
@@ -45,12 +47,19 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ExportService {
 
+    private static final String UUID_PAT =
+            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+
     private static final Pattern CITE_MARKER = Pattern.compile(
-            "\\[\\[@CITE:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\]\\]"
+            "\\[\\[@CITE:(" + UUID_PAT + ")\\]\\]"
     );
 
     private static final Pattern FIG_MARKER = Pattern.compile(
-            "\\[\\[@FIG:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\]\\]"
+            "\\[\\[@FIG:(" + UUID_PAT + ")\\]\\]"
+    );
+
+    private static final Pattern TABLE_QUADRO_MARKER = Pattern.compile(
+            "\\[\\[@(?:TABLE|QUADRO):(" + UUID_PAT + ")\\]\\]"
     );
 
     private static final Set<ChapterType> REQUIRED_TEXTUAL_TYPES = Set.of(
@@ -68,6 +77,7 @@ public class ExportService {
     private final CitationRepository citationRepository;
     private final FigureRepository figureRepository;
     private final FigureStorageService figureStorageService;
+    private final AcademicTableRepository tableRepository;
     private final UserService userService;
     private final DocxBuilder docxBuilder;
 
@@ -121,8 +131,12 @@ public class ExportService {
             }
         }
 
+        List<AcademicTable> academicTables = tableRepository.findByProjectIdOrderByCreatedAtAsc(project.getId());
+        Map<UUID, AcademicTable> tableLookup = academicTables.stream()
+                .collect(Collectors.toMap(AcademicTable::getId, t -> t));
+
         try {
-            byte[] content = docxBuilder.build(project, chapters, references, citationLookup, figureLookup);
+            byte[] content = docxBuilder.build(project, chapters, references, citationLookup, figureLookup, tableLookup);
             saveFile(project.getId(), fileName, content);
         } catch (IOException e) {
             throw new UncheckedIOException("Falha ao gerar arquivo DOCX", e);
@@ -160,6 +174,7 @@ public class ExportService {
         int referenceCoverage = checkReferences(references, pendingItems, completedItems);
         checkOrphanCitationMarkers(project.getId(), chapters, pendingItems);
         checkOrphanFigureMarkers(project.getId(), chapters, pendingItems);
+        checkOrphanTableMarkers(project.getId(), chapters, pendingItems);
 
         return new ExportStatusResponse(
                 project.getId(),
@@ -290,6 +305,26 @@ public class ExportService {
                         && !figureStorageService.exists(fig.getStorageKey())) {
                     pending.add("Figura '" + fig.getCaption() + "' não possui arquivo disponível");
                     storageMissingReported.add(fig.getId());
+                }
+            }
+        }
+    }
+
+    private void checkOrphanTableMarkers(UUID projectId, List<Chapter> chapters, List<String> pending) {
+        List<AcademicTable> tables = tableRepository.findByProjectIdOrderByCreatedAtAsc(projectId);
+        Set<UUID> knownIds = tables.stream()
+                .map(AcademicTable::getId)
+                .collect(Collectors.toSet());
+
+        for (Chapter chapter : chapters) {
+            if (chapter.getContent() == null || chapter.getContent().isBlank()) continue;
+            Matcher m = TABLE_QUADRO_MARKER.matcher(chapter.getContent());
+            boolean orphanReported = false;
+            while (m.find()) {
+                UUID markerId = UUID.fromString(m.group(1));
+                if (!knownIds.contains(markerId) && !orphanReported) {
+                    pending.add("Capítulo '" + chapter.getTitle() + "' possui tabela/quadro inválido ou removido");
+                    orphanReported = true;
                 }
             }
         }

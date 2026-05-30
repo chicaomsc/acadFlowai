@@ -15,6 +15,8 @@ public record AcademicTemplate(
         String abstractLabel,
         String summaryLabel,
         String figureListLabel,
+        String tableListLabel,
+        String quadroListLabel,
         String referencesLabel,
 
         // Title-page nature statement template
