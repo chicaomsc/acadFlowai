@@ -97,6 +97,7 @@ type ChapterEditorHandle = {
   focusAtEnd: () => void
   focusAtOffset: (offset: number) => void
   insertCitation: (citationId: string, citation?: Citation) => string
+  insertCrossReference: (kind: CrossReferenceKind, targetId: string, reference?: CrossReferenceRenderItem) => string
   insertFigure: (figureId: string, figure?: Figure) => { value: string; caretOffset: number }
   insertTabularElement: (itemId: string, kind: TabularElementKind, item?: TabularElement) => { value: string; caretOffset: number }
 }
@@ -125,11 +126,23 @@ type QuickReferenceFormState = {
   source: string
   url: string
 }
+type CrossReferenceKind = 'FIG' | 'TABLE' | 'QUADRO'
+type CrossReferenceFormState = {
+  kind: CrossReferenceKind
+  targetId: string
+}
+type CrossReferenceRenderItem = {
+  id: string
+  kind: CrossReferenceKind
+  label: string
+  tooltip: string
+}
 
 const CITE_MARKER_REGEX = /\[\[@CITE:([^\]]+)\]\]/g
 const FIG_MARKER_REGEX = /\[\[@FIG:([^\]]+)\]\]/g
 const TABLE_MARKER_REGEX = /\[\[@TABLE:([^\]]+)\]\]/g
 const QUADRO_MARKER_REGEX = /\[\[@QUADRO:([^\]]+)\]\]/g
+const XREF_MARKER_REGEX = /\[\[@XREF:(FIG|TABLE|QUADRO):([^\]]+)\]\]/g
 const defaultCitationFormState: CitationFormState = {
   referenceId: '',
   type: 'indirect',
@@ -169,6 +182,10 @@ const quickReferenceDefaultFormState: QuickReferenceFormState = {
   year: '',
   source: '',
   url: '',
+}
+const defaultCrossReferenceFormState: CrossReferenceFormState = {
+  kind: 'FIG',
+  targetId: '',
 }
 
 function isChapterNode(nodeId: EditorNodeId) {
@@ -222,6 +239,10 @@ function buildQuadroMarker(itemId: string) {
 
 function buildTabularMarker(kind: TabularElementKind, itemId: string) {
   return kind === 'table' ? buildTableMarker(itemId) : buildQuadroMarker(itemId)
+}
+
+function buildCrossReferenceMarker(kind: CrossReferenceKind, targetId: string) {
+  return `[[@XREF:${kind}:${targetId}]]`
 }
 
 function escapeRegExp(value: string) {
@@ -302,6 +323,28 @@ function buildFigurePreviewLabel(figure?: Figure) {
 function buildTabularElementPreviewLabel(item?: TabularElement) {
   if (!item) return 'Elemento inválido ou removido'
   return `${item.kind === 'table' ? 'Tabela' : 'Quadro'} – ${item.title}`
+}
+
+function getCrossReferenceNoun(kind: CrossReferenceKind) {
+  if (kind === 'FIG') return 'Figura'
+  if (kind === 'TABLE') return 'Tabela'
+  return 'Quadro'
+}
+
+function getCrossReferenceInvalidLabel() {
+  return 'referência inválida'
+}
+
+function getCrossReferenceLabel(reference?: CrossReferenceRenderItem) {
+  return reference?.label ?? getCrossReferenceInvalidLabel()
+}
+
+function getCrossReferenceTooltip(kind: CrossReferenceKind, targetId: string, reference?: CrossReferenceRenderItem) {
+  if (!reference) {
+    return `Marcador ${buildCrossReferenceMarker(kind, targetId)} não encontrado na lista de elementos do projeto.`
+  }
+
+  return reference.tooltip
 }
 
 function getInvalidTabularFallbackLabel(kind: TabularElementKind) {
@@ -404,6 +447,13 @@ export function extractTableIds(content: string) {
 
 export function extractQuadroIds(content: string) {
   return Array.from(content.matchAll(QUADRO_MARKER_REGEX), (match) => match[1])
+}
+
+export function extractCrossReferenceTargets(content: string) {
+  return Array.from(content.matchAll(XREF_MARKER_REGEX), (match) => ({
+    kind: match[1] as CrossReferenceKind,
+    targetId: match[2],
+  }))
 }
 
 function getCitationChipLabel(citation?: Citation) {
@@ -509,6 +559,21 @@ function createCitationChipNode(doc: Document, citationId: string, citation?: Ci
   return chip
 }
 
+function createCrossReferenceNode(doc: Document, kind: CrossReferenceKind, targetId: string, reference?: CrossReferenceRenderItem) {
+  const chip = doc.createElement('span')
+  chip.dataset.xrefKind = kind
+  chip.dataset.xrefTargetId = targetId
+  chip.contentEditable = 'false'
+  chip.className = reference
+    ? 'inline rounded-sm border-b border-dotted border-primary/30 px-0.5 text-[0.98em] leading-[inherit] text-foreground align-baseline'
+    : 'inline rounded-sm border-b border-dotted border-amber-400/70 px-0.5 text-[0.98em] leading-[inherit] text-amber-800 align-baseline'
+  chip.textContent = getCrossReferenceLabel(reference)
+  chip.title = getCrossReferenceTooltip(kind, targetId, reference)
+  chip.setAttribute('aria-label', getCrossReferenceTooltip(kind, targetId, reference))
+  chip.setAttribute('tabindex', '0')
+  return chip
+}
+
 function createFigureChipNode(doc: Document, figureId: string, figure?: Figure, figureNumber?: number) {
   const wrapper = doc.createElement('figure')
   wrapper.dataset.figureId = figureId
@@ -600,20 +665,21 @@ function createTabularElementNode(
   return wrapper
 }
 
-const INLINE_MARKER_REGEX = /\[\[@(CITE|FIG|TABLE|QUADRO):([^\]]+)\]\]/g
+const INLINE_MARKER_REGEX = /\[\[@(CITE|FIG|TABLE|QUADRO):([^\]]+)\]\]|\[\[@XREF:(FIG|TABLE|QUADRO):([^\]]+)\]\]/g
 function appendContentWithInlineMarkers(
   root: HTMLElement,
   content: string,
   citationsMap: Map<string, Citation>,
   figuresMap: Map<string, Figure>,
   tabularElementsMap: Map<string, TabularElement>,
+  crossReferencesMap: Map<string, CrossReferenceRenderItem>,
 ) {
   let lastIndex = 0
   let figureNumber = 0
   let tableNumber = 0
   let quadroNumber = 0
 
-  content.replace(INLINE_MARKER_REGEX, (match, markerType: string, markerId: string, offset: number) => {
+  content.replace(INLINE_MARKER_REGEX, (match, markerType: string, markerId: string, xrefKind: string, xrefTargetId: string, offset: number) => {
     if (offset > lastIndex) {
       root.append(document.createTextNode(content.slice(lastIndex, offset)))
     }
@@ -626,9 +692,11 @@ function appendContentWithInlineMarkers(
     } else if (markerType === 'TABLE') {
       tableNumber += 1
       root.append(createTabularElementNode(root.ownerDocument, markerId, tabularElementsMap.get(markerId), tableNumber, 'table'))
-    } else {
+    } else if (markerType === 'QUADRO') {
       quadroNumber += 1
       root.append(createTabularElementNode(root.ownerDocument, markerId, tabularElementsMap.get(markerId), quadroNumber, 'quadro'))
+    } else if (xrefKind && xrefTargetId) {
+      root.append(createCrossReferenceNode(root.ownerDocument, xrefKind as CrossReferenceKind, xrefTargetId, crossReferencesMap.get(`${xrefKind}:${xrefTargetId}`)))
     }
 
     lastIndex = offset + match.length
@@ -646,9 +714,10 @@ function renderContentEditableValue(
   citationsMap: Map<string, Citation>,
   figuresMap: Map<string, Figure>,
   tabularElementsMap: Map<string, TabularElement>,
+  crossReferencesMap: Map<string, CrossReferenceRenderItem>,
 ) {
   root.replaceChildren()
-  appendContentWithInlineMarkers(root, content, citationsMap, figuresMap, tabularElementsMap)
+  appendContentWithInlineMarkers(root, content, citationsMap, figuresMap, tabularElementsMap, crossReferencesMap)
 }
 
 function serializeEditorNode(node: Node): string {
@@ -674,6 +743,10 @@ function serializeEditorNode(node: Node): string {
 
   if (node.dataset.quadroId) {
     return buildQuadroMarker(node.dataset.quadroId)
+  }
+
+  if (node.dataset.xrefKind && node.dataset.xrefTargetId) {
+    return buildCrossReferenceMarker(node.dataset.xrefKind as CrossReferenceKind, node.dataset.xrefTargetId)
   }
 
   if (node.tagName === 'BR') {
@@ -709,7 +782,7 @@ function getSerializedOffset(root: HTMLElement, container: Node, offset: number)
       if (node.nodeType === Node.TEXT_NODE) {
         serializedOffset += offset
       } else if (node instanceof HTMLElement) {
-        if (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId) {
+        if (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId || (node.dataset.xrefKind && node.dataset.xrefTargetId)) {
           serializedOffset += offset > 0 ? getSerializedNodeLength(node) : 0
         } else if (node.tagName === 'BR') {
           serializedOffset += Math.min(offset, 1)
@@ -733,7 +806,7 @@ function getSerializedOffset(root: HTMLElement, container: Node, offset: number)
       return false
     }
 
-    if (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId) {
+    if (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId || (node.dataset.xrefKind && node.dataset.xrefTargetId)) {
       serializedOffset += getSerializedNodeLength(node)
       return false
     }
@@ -800,7 +873,7 @@ function placeCaretAtSerializedOffset(root: HTMLElement, targetOffset: number) {
       return
     }
 
-    if (node instanceof HTMLElement && (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId)) {
+    if (node instanceof HTMLElement && (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId || (node.dataset.xrefKind && node.dataset.xrefTargetId))) {
       if (remainingOffset === 0) {
         range.setStartBefore(node)
       } else {
@@ -1134,6 +1207,9 @@ export function EditorPage() {
   const [citationForm, setCitationForm] = useState<CitationFormState>(defaultCitationFormState)
   const [citationFeedback, setCitationFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
   const [citationSaving, setCitationSaving] = useState(false)
+  const [crossReferenceDialogOpen, setCrossReferenceDialogOpen] = useState(false)
+  const [crossReferenceForm, setCrossReferenceForm] = useState<CrossReferenceFormState>(defaultCrossReferenceFormState)
+  const [crossReferenceFeedback, setCrossReferenceFeedback] = useState<string | null>(null)
   const [figureDialogOpen, setFigureDialogOpen] = useState(false)
   const [figureForm, setFigureForm] = useState<FigureFormState>(defaultFigureFormState)
   const [figureFeedback, setFigureFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
@@ -1392,6 +1468,157 @@ export function EditorPage() {
       return ordered
     },
     [projectChapterContents, tabularElementsMap],
+  )
+  const figureNumberMap = useMemo(
+    () => new Map(figuresInReadingOrder.map((figure, index) => [figure.id, index + 1])),
+    [figuresInReadingOrder],
+  )
+  const tableNumberMap = useMemo(
+    () => new Map(tablesInReadingOrder.map((item, index) => [item.id, index + 1])),
+    [tablesInReadingOrder],
+  )
+  const quadroNumberMap = useMemo(
+    () => new Map(quadrosInReadingOrder.map((item, index) => [item.id, index + 1])),
+    [quadrosInReadingOrder],
+  )
+  const crossReferencesMap = useMemo(
+    () => {
+      const map = new Map<string, CrossReferenceRenderItem>()
+
+      figuresInReadingOrder.forEach((figure, index) => {
+        map.set(`FIG:${figure.id}`, {
+          id: figure.id,
+          kind: 'FIG',
+          label: `Figura ${index + 1}`,
+          tooltip: `Figura ${index + 1} • ${figure.caption}${figure.sourceText ? ` • ${figure.sourceText}` : ''}`,
+        })
+      })
+
+      tablesInReadingOrder.forEach((item, index) => {
+        map.set(`TABLE:${item.id}`, {
+          id: item.id,
+          kind: 'TABLE',
+          label: `Tabela ${index + 1}`,
+          tooltip: `Tabela ${index + 1} • ${item.title}${item.sourceText ? ` • ${item.sourceText}` : ''}`,
+        })
+      })
+
+      quadrosInReadingOrder.forEach((item, index) => {
+        map.set(`QUADRO:${item.id}`, {
+          id: item.id,
+          kind: 'QUADRO',
+          label: `Quadro ${index + 1}`,
+          tooltip: `Quadro ${index + 1} • ${item.title}${item.sourceText ? ` • ${item.sourceText}` : ''}`,
+        })
+      })
+
+      projectFigures
+        .filter((figure) => !figureNumberMap.has(figure.id))
+        .forEach((figure) => {
+          map.set(`FIG:${figure.id}`, {
+            id: figure.id,
+            kind: 'FIG',
+            label: 'Figura não usada',
+            tooltip: `Figura não usada no texto • ${figure.caption}${figure.sourceText ? ` • ${figure.sourceText}` : ''}`,
+          })
+        })
+
+      projectTabularElements
+        .filter((item) => item.kind === 'table' && !tableNumberMap.has(item.id))
+        .forEach((item) => {
+          map.set(`TABLE:${item.id}`, {
+            id: item.id,
+            kind: 'TABLE',
+            label: 'Tabela não usada',
+            tooltip: `Tabela não usada no texto • ${item.title}${item.sourceText ? ` • ${item.sourceText}` : ''}`,
+          })
+        })
+
+      projectTabularElements
+        .filter((item) => item.kind === 'quadro' && !quadroNumberMap.has(item.id))
+        .forEach((item) => {
+          map.set(`QUADRO:${item.id}`, {
+            id: item.id,
+            kind: 'QUADRO',
+            label: 'Quadro não usado',
+            tooltip: `Quadro não usado no texto • ${item.title}${item.sourceText ? ` • ${item.sourceText}` : ''}`,
+          })
+        })
+
+      return map
+    },
+    [figureNumberMap, figuresInReadingOrder, projectFigures, projectTabularElements, quadroNumberMap, quadrosInReadingOrder, tableNumberMap, tablesInReadingOrder],
+  )
+  const crossReferenceOptions = useMemo(
+    () => {
+      const usedFigures = figuresInReadingOrder.map((figure) => ({
+        id: figure.id,
+        kind: 'FIG' as const,
+        label: `Figura ${figureNumberMap.get(figure.id) ?? 1}`,
+        description: figure.caption,
+        used: true,
+      }))
+      const unusedFigures = projectFigures
+        .filter((figure) => !figureNumberMap.has(figure.id))
+        .map((figure) => ({
+          id: figure.id,
+          kind: 'FIG' as const,
+          label: 'Figura não usada',
+          description: figure.caption,
+          used: false,
+        }))
+      const usedTables = tablesInReadingOrder.map((item) => ({
+        id: item.id,
+        kind: 'TABLE' as const,
+        label: `Tabela ${tableNumberMap.get(item.id) ?? 1}`,
+        description: item.title,
+        used: true,
+      }))
+      const unusedTables = projectTabularElements
+        .filter((item) => item.kind === 'table' && !tableNumberMap.has(item.id))
+        .map((item) => ({
+          id: item.id,
+          kind: 'TABLE' as const,
+          label: 'Tabela não usada',
+          description: item.title,
+          used: false,
+        }))
+      const usedQuadros = quadrosInReadingOrder.map((item) => ({
+        id: item.id,
+        kind: 'QUADRO' as const,
+        label: `Quadro ${quadroNumberMap.get(item.id) ?? 1}`,
+        description: item.title,
+        used: true,
+      }))
+      const unusedQuadros = projectTabularElements
+        .filter((item) => item.kind === 'quadro' && !quadroNumberMap.has(item.id))
+        .map((item) => ({
+          id: item.id,
+          kind: 'QUADRO' as const,
+          label: 'Quadro não usado',
+          description: item.title,
+          used: false,
+        }))
+
+      return {
+        FIG: [...usedFigures, ...unusedFigures],
+        TABLE: [...usedTables, ...unusedTables],
+        QUADRO: [...usedQuadros, ...unusedQuadros],
+      }
+    },
+    [figureNumberMap, figuresInReadingOrder, projectFigures, projectTabularElements, quadroNumberMap, quadrosInReadingOrder, tableNumberMap, tablesInReadingOrder],
+  )
+  const currentCrossReferenceOptions = useMemo(
+    () => crossReferenceOptions[crossReferenceForm.kind],
+    [crossReferenceForm.kind, crossReferenceOptions],
+  )
+  const currentCrossReferencePreview = useMemo(
+    () => (
+      crossReferenceForm.targetId
+        ? crossReferencesMap.get(`${crossReferenceForm.kind}:${crossReferenceForm.targetId}`)
+        : undefined
+    ),
+    [crossReferenceForm.kind, crossReferenceForm.targetId, crossReferencesMap],
   )
   const currentTabularValidation = useMemo(
     () => validateTabularElementForm(tabularElementForm.rows),
@@ -1858,6 +2085,10 @@ export function EditorPage() {
     setQuickReferenceForm((current) => ({ ...current, [field]: value }))
   }
 
+  function updateCrossReferenceForm<K extends keyof CrossReferenceFormState>(field: K, value: CrossReferenceFormState[K]) {
+    setCrossReferenceForm((current) => ({ ...current, [field]: value }))
+  }
+
   function updateTabularElementForm<K extends keyof TabularElementFormState>(field: K, value: TabularElementFormState[K]) {
     setTabularElementForm((current) => ({ ...current, [field]: value }))
   }
@@ -1927,6 +2158,34 @@ export function EditorPage() {
     window.requestAnimationFrame(() => {
       chapterEditorRef.current?.focusAtOffset(_nextPosition)
     })
+  }
+
+  function handleCrossReferenceKindChange(kind: CrossReferenceKind) {
+    const nextOption = crossReferenceOptions[kind][0]
+    setCrossReferenceForm({
+      kind,
+      targetId: nextOption?.id ?? '',
+    })
+  }
+
+  function handleCreateCrossReference() {
+    if (!crossReferenceForm.targetId) {
+      setCrossReferenceFeedback(`Selecione ${getCrossReferenceNoun(crossReferenceForm.kind).toLowerCase()} para inserir a referência cruzada.`)
+      return
+    }
+
+    const marker = buildCrossReferenceMarker(crossReferenceForm.kind, crossReferenceForm.targetId)
+    const nextContent = chapterEditorRef.current?.insertCrossReference(
+      crossReferenceForm.kind,
+      crossReferenceForm.targetId,
+      crossReferencesMap.get(`${crossReferenceForm.kind}:${crossReferenceForm.targetId}`),
+    ) ?? `${latestContentRef.current}${marker}`
+
+    setContent(nextContent)
+    latestContentRef.current = nextContent
+    setCrossReferenceDialogOpen(false)
+    setCrossReferenceFeedback(null)
+    focusEditorAtPosition(nextContent.length)
   }
 
   async function handleCreateCitation() {
@@ -2652,6 +2911,27 @@ export function EditorPage() {
                                 }}
                                 disabled={tabularElementSaving}
                               />
+                              <AcademicToolbarButton
+                                icon={Link2}
+                                label="Inserir referência cruzada"
+                                tooltip="Insere uma referência para figura, tabela ou quadro no ponto atual do cursor."
+                                onClick={() => {
+                                  const defaultKind: CrossReferenceKind =
+                                    crossReferenceOptions.FIG.length > 0
+                                      ? 'FIG'
+                                      : crossReferenceOptions.TABLE.length > 0
+                                        ? 'TABLE'
+                                        : 'QUADRO'
+                                  const nextOption = crossReferenceOptions[defaultKind][0]
+                                  setCrossReferenceFeedback(null)
+                                  setCrossReferenceForm({
+                                    kind: defaultKind,
+                                    targetId: nextOption?.id ?? '',
+                                  })
+                                  setCrossReferenceDialogOpen(true)
+                                }}
+                                disabled={!crossReferenceOptions.FIG.length && !crossReferenceOptions.TABLE.length && !crossReferenceOptions.QUADRO.length}
+                              />
                               </div>
                               <div className="flex min-w-max items-center gap-2 pl-3">
                                 <span className="h-4 w-px bg-border/70" />
@@ -2714,6 +2994,7 @@ export function EditorPage() {
                               citationsMap={citationsMap}
                               figuresMap={figuresMap}
                               tabularElementsMap={tabularElementsMap}
+                              crossReferencesMap={crossReferencesMap}
                               onChange={(nextValue) => {
                                 setContent(nextValue)
                                 latestContentRef.current = nextValue
@@ -3454,6 +3735,86 @@ export function EditorPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={crossReferenceDialogOpen} onOpenChange={setCrossReferenceDialogOpen}>
+          <DialogContent className="max-w-2xl rounded-[28px] border-border/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(249,250,252,0.98))] p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+            <div className="border-b border-border/60 px-6 py-5 md:px-7">
+              <DialogHeader className="text-left">
+                <DialogTitle className="text-[1.45rem] tracking-[-0.02em] text-foreground">Inserir referência cruzada</DialogTitle>
+                <DialogDescription className="mt-1 max-w-xl text-sm leading-6 text-muted-foreground">
+                  Vincule o texto a uma figura, tabela ou quadro já existente no projeto.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+
+            <div className="space-y-5 px-6 py-6 md:px-7">
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-foreground">Tipo</p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {(['FIG', 'TABLE', 'QUADRO'] as CrossReferenceKind[]).map((kind) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      onClick={() => handleCrossReferenceKindChange(kind)}
+                      className={`rounded-[22px] border px-4 py-3 text-left transition-colors ${
+                        crossReferenceForm.kind === kind
+                          ? 'border-primary/50 bg-primary/6 shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
+                          : 'border-border/70 bg-white/84 hover:border-border'
+                      }`}
+                    >
+                      <p className="text-sm font-medium text-foreground">{getCrossReferenceNoun(kind)}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-foreground">Elemento</p>
+                <Select
+                  value={crossReferenceForm.targetId}
+                  onValueChange={(value) => {
+                    updateCrossReferenceForm('targetId', value)
+                    setCrossReferenceFeedback(null)
+                  }}
+                >
+                  <SelectTrigger className="h-11 rounded-2xl bg-white/84">
+                    <SelectValue placeholder={`Selecione ${getCrossReferenceNoun(crossReferenceForm.kind).toLowerCase()}`} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {currentCrossReferenceOptions.map((option) => (
+                      <SelectItem key={`${option.kind}:${option.id}`} value={option.id}>
+                        {option.label} — {option.description}{option.used ? '' : ' • não usado no texto'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="rounded-[22px] border border-border/70 bg-[linear-gradient(180deg,rgba(250,251,252,0.95),rgba(255,255,255,0.98))] px-4 py-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/70">Preview</p>
+                <p className="mt-3 text-[15px] leading-7 text-foreground">
+                  {currentCrossReferencePreview?.label ?? getCrossReferenceInvalidLabel()}
+                </p>
+              </div>
+
+              {crossReferenceFeedback ? (
+                <p className="rounded-[18px] border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  {crossReferenceFeedback}
+                </p>
+              ) : null}
+            </div>
+
+            <DialogFooter className="border-t border-border/60 px-6 py-5 md:px-7">
+              <Button variant="outline" onClick={() => setCrossReferenceDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={handleCreateCrossReference} disabled={!crossReferenceForm.targetId}>
+                <Link2 className="h-4 w-4" />
+                Inserir referência cruzada
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={citationDialogOpen} onOpenChange={setCitationDialogOpen}>
           <DialogContent className="max-w-2xl rounded-[28px] border-border/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(249,250,252,0.98))] p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
             <div className="border-b border-border/60 px-6 py-5 md:px-7">
@@ -3772,9 +4133,10 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
   citationsMap: Map<string, Citation>
   figuresMap: Map<string, Figure>
   tabularElementsMap: Map<string, TabularElement>
+  crossReferencesMap: Map<string, CrossReferenceRenderItem>
   onChange: (value: string) => void
   placeholder: string
-}>(({ value, citationsMap, figuresMap, tabularElementsMap, onChange, placeholder }, ref) => {
+}>(({ value, citationsMap, figuresMap, tabularElementsMap, crossReferencesMap, onChange, placeholder }, ref) => {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const rawValueRef = useRef(value)
   const lastSelectionRef = useRef<{ start: number; end: number } | null>(null)
@@ -3787,7 +4149,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
     rawValueRef.current = value
 
     if (needsRerender) {
-      renderContentEditableValue(root, value, citationsMap, figuresMap, tabularElementsMap)
+      renderContentEditableValue(root, value, citationsMap, figuresMap, tabularElementsMap, crossReferencesMap)
     } else {
       Array.from(root.querySelectorAll<HTMLElement>('[data-citation-id]')).forEach((chip) => {
         const citationId = chip.dataset.citationId ?? ''
@@ -3817,8 +4179,15 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
         const nextNode = createTabularElementNode(document, itemId, tabularElementsMap.get(itemId), index + 1, 'quadro')
         node.replaceWith(nextNode)
       })
+      Array.from(root.querySelectorAll<HTMLElement>('[data-xref-kind][data-xref-target-id]')).forEach((chip) => {
+        const kind = chip.dataset.xrefKind as CrossReferenceKind | undefined
+        const targetId = chip.dataset.xrefTargetId ?? ''
+        if (!kind) return
+        const nextNode = createCrossReferenceNode(document, kind, targetId, crossReferencesMap.get(`${kind}:${targetId}`))
+        chip.replaceWith(nextNode)
+      })
     }
-  }, [citationsMap, figuresMap, tabularElementsMap, value])
+  }, [citationsMap, crossReferencesMap, figuresMap, tabularElementsMap, value])
 
   useEffect(() => {
     const updateSelectionSnapshot = () => {
@@ -3881,6 +4250,31 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       onChange(nextValue)
       return nextValue
     },
+    insertCrossReference(kind: CrossReferenceKind, targetId: string, referenceOverride?: CrossReferenceRenderItem) {
+      const root = rootRef.current
+      if (!root) return value
+
+      const selection = window.getSelection()
+      const range = selection && selection.rangeCount > 0 && root.contains(selection.anchorNode)
+        ? selection.getRangeAt(0)
+        : null
+      const referenceNode = createCrossReferenceNode(document, kind, targetId, referenceOverride ?? crossReferencesMap.get(`${kind}:${targetId}`))
+
+      if (range) {
+        range.deleteContents()
+        range.insertNode(referenceNode)
+        moveCaretAfterNode(referenceNode)
+      } else {
+        root.append(referenceNode)
+        moveCaretAfterNode(referenceNode)
+      }
+
+      const nextValue = serializeEditorContent(root)
+      rawValueRef.current = nextValue
+      lastSelectionRef.current = null
+      onChange(nextValue)
+      return nextValue
+    },
     insertFigure(figureId: string, figureOverride?: Figure) {
       const root = rootRef.current
       if (!root) {
@@ -3904,7 +4298,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       const { nextValue, caretOffset } = buildBlockInsertionContent(value, startOffset, endOffset, marker)
 
       rawValueRef.current = nextValue
-      renderContentEditableValue(root, nextValue, citationsMap, nextFiguresMap, tabularElementsMap)
+      renderContentEditableValue(root, nextValue, citationsMap, nextFiguresMap, tabularElementsMap, crossReferencesMap)
       window.requestAnimationFrame(() => {
         placeCaretAtSerializedOffset(root, caretOffset)
       })
@@ -3937,7 +4331,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       const { nextValue, caretOffset } = buildBlockInsertionContent(value, startOffset, endOffset, marker)
 
       rawValueRef.current = nextValue
-      renderContentEditableValue(root, nextValue, citationsMap, figuresMap, nextTabularElementsMap)
+      renderContentEditableValue(root, nextValue, citationsMap, figuresMap, nextTabularElementsMap, crossReferencesMap)
       window.requestAnimationFrame(() => {
         placeCaretAtSerializedOffset(root, caretOffset)
       })
@@ -3947,7 +4341,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       onChange(nextValue)
       return { value: nextValue, caretOffset }
     },
-  }), [citationsMap, figuresMap, onChange, tabularElementsMap, value])
+  }), [citationsMap, crossReferencesMap, figuresMap, onChange, tabularElementsMap, value])
 
   function emitCurrentValue() {
     const root = rootRef.current
@@ -3988,7 +4382,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
         return container.childNodes[offset] ?? null
       })()
 
-      if (sibling instanceof HTMLElement && (sibling.dataset.citationId || sibling.dataset.figureId || sibling.dataset.tableId || sibling.dataset.quadroId)) {
+      if (sibling instanceof HTMLElement && (sibling.dataset.citationId || sibling.dataset.figureId || sibling.dataset.tableId || sibling.dataset.quadroId || (sibling.dataset.xrefKind && sibling.dataset.xrefTargetId))) {
         event.preventDefault()
         const nextCaretTarget = event.key === 'Backspace' ? sibling.previousSibling : sibling.nextSibling
         sibling.remove()

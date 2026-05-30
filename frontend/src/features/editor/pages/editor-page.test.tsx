@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as citationService from '@/shared/services/citation.service'
 import * as figureService from '@/shared/services/figure.service'
 import * as tableService from '@/shared/services/table.service'
-import { buildCitationAbntPreview, EditorPage, extractCitationIds, extractFigureIds, extractQuadroIds, extractTableIds, validateTabularElementForm } from '@/features/editor/pages/editor-page'
+import { buildCitationAbntPreview, EditorPage, extractCitationIds, extractCrossReferenceTargets, extractFigureIds, extractQuadroIds, extractTableIds, validateTabularElementForm } from '@/features/editor/pages/editor-page'
 import { mockDb } from '@/shared/mocks/database'
 import { getChapter, updateChapterContent } from '@/shared/services/chapter.service'
 import { getChapterCitations } from '@/shared/services/citation.service'
@@ -87,6 +87,14 @@ describe('editor page', () => {
   it('extrai ids de tabelas e quadros a partir dos marcadores no texto', () => {
     expect(extractTableIds('Texto [[@TABLE:table-1]] e [[@TABLE:table-abc]].')).toEqual(['table-1', 'table-abc'])
     expect(extractQuadroIds('Texto [[@QUADRO:quadro-1]] e [[@QUADRO:quadro-abc]].')).toEqual(['quadro-1', 'quadro-abc'])
+  })
+
+  it('extrai referências cruzadas a partir dos marcadores no texto', () => {
+    expect(extractCrossReferenceTargets('Texto [[@XREF:FIG:figure-1]] e [[@XREF:TABLE:table-1]] e [[@XREF:QUADRO:quadro-1]].')).toEqual([
+      { kind: 'FIG', targetId: 'figure-1' },
+      { kind: 'TABLE', targetId: 'table-1' },
+      { kind: 'QUADRO', targetId: 'quadro-1' },
+    ])
   })
 
   it('valida grade de tabela/quadro exigindo cabeçalhos e pelo menos uma linha com conteúdo', () => {
@@ -501,6 +509,71 @@ describe('editor page', () => {
     })
   })
 
+  it('insere referência cruzada de figura e preserva o marcador bruto', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@FIG:figure-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir referência cruzada/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir referência cruzada' })
+    await user.click(within(dialog).getByRole('button', { name: /inserir referência cruzada/i }))
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    expect(editor.textContent).toContain('Figura 1')
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain('[[@XREF:FIG:figure-1]]')
+    })
+  })
+
+  it('insere referência cruzada de tabela e renderiza inline corretamente', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@TABLE:table-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir referência cruzada/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir referência cruzada' })
+    await user.click(within(dialog).getByRole('button', { name: /tabela/i }))
+    await user.click(within(dialog).getByRole('button', { name: /inserir referência cruzada/i }))
+
+    expect(editor.textContent).toContain('Tabela 1')
+  })
+
+  it('insere referência cruzada de quadro e renderiza inline corretamente', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@QUADRO:quadro-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir referência cruzada/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir referência cruzada' })
+    await user.click(within(dialog).getByRole('button', { name: /quadro/i }))
+    await user.click(within(dialog).getByRole('button', { name: /inserir referência cruzada/i }))
+
+    expect(editor.textContent).toContain('Quadro 1')
+  })
+
   it('mostra mensagem útil quando a criação de tabela/quadro retorna 404', async () => {
     const user = userEvent.setup()
     vi.spyOn(tableService, 'createTabularElement').mockRejectedValue(
@@ -859,6 +932,21 @@ describe('editor page', () => {
     })
   })
 
+  it('mostra fallback quando a referência cruzada não é encontrada', async () => {
+    await updateChapterContent('chapter-3', 'Texto com marcador órfão [[@XREF:FIG:missing-figure]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-3'],
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Metodologia' })).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Editor do capítulo' }).textContent).toContain('referência inválida')
+    })
+  })
+
   it('reload reconstrói o preview visual da figura a partir do marcador', async () => {
     await updateChapterContent('chapter-3', 'Texto antes.\n\n[[@FIG:figure-1]]\n\nTexto depois.')
 
@@ -1055,6 +1143,26 @@ describe('editor page', () => {
       const updatedChapter = await getChapter('chapter-1')
       expect(updatedChapter?.content).toContain('[[@TABLE:table-1]]')
       expect(updatedChapter?.content).toContain('[[@QUADRO:quadro-1]]')
+    })
+  })
+
+  it('serializa a referência cruzada de volta para o marcador bruto e mantém o reload correto', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@FIG:figure-1]] e [[@XREF:FIG:figure-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    expect(editor.textContent).toContain('Figura 1')
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain('[[@XREF:FIG:figure-1]]')
     })
   })
 

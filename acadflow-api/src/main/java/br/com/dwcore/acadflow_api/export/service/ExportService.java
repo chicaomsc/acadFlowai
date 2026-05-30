@@ -62,6 +62,10 @@ public class ExportService {
             "\\[\\[@(?:TABLE|QUADRO):(" + UUID_PAT + ")\\]\\]"
     );
 
+    private static final Pattern XREF_MARKER = Pattern.compile(
+            "\\[\\[@XREF:(FIG|TABLE|QUADRO):(" + UUID_PAT + ")\\]\\]"
+    );
+
     private static final Set<ChapterType> REQUIRED_TEXTUAL_TYPES = Set.of(
             ChapterType.INTRODUCTION,
             ChapterType.THEORETICAL_FOUNDATION,
@@ -175,6 +179,7 @@ public class ExportService {
         checkOrphanCitationMarkers(project.getId(), chapters, pendingItems);
         checkOrphanFigureMarkers(project.getId(), chapters, pendingItems);
         checkOrphanTableMarkers(project.getId(), chapters, pendingItems);
+        checkOrphanXrefMarkers(project.getId(), chapters, pendingItems);
 
         return new ExportStatusResponse(
                 project.getId(),
@@ -325,6 +330,33 @@ public class ExportService {
                 if (!knownIds.contains(markerId) && !orphanReported) {
                     pending.add("Capítulo '" + chapter.getTitle() + "' possui tabela/quadro inválido ou removido");
                     orphanReported = true;
+                }
+            }
+        }
+    }
+
+    private void checkOrphanXrefMarkers(UUID projectId, List<Chapter> chapters, List<String> pending) {
+        Set<UUID> knownFigures = figureRepository.findByProjectIdOrderByCreatedAtAsc(projectId)
+                .stream().map(Figure::getId).collect(Collectors.toSet());
+        Set<UUID> knownTables = tableRepository.findByProjectIdOrderByCreatedAtAsc(projectId)
+                .stream().map(AcademicTable::getId).collect(Collectors.toSet());
+
+        for (Chapter chapter : chapters) {
+            if (chapter.getContent() == null || chapter.getContent().isBlank()) continue;
+            Matcher m = XREF_MARKER.matcher(chapter.getContent());
+            boolean reported = false;
+            while (m.find() && !reported) {
+                String subType = m.group(1);
+                UUID targetId = UUID.fromString(m.group(2));
+                boolean valid = switch (subType) {
+                    case "FIG"           -> knownFigures.contains(targetId);
+                    case "TABLE", "QUADRO" -> knownTables.contains(targetId);
+                    default              -> false;
+                };
+                if (!valid) {
+                    pending.add("Capítulo '" + chapter.getTitle()
+                            + "' possui referência cruzada inválida ou removida");
+                    reported = true;
                 }
             }
         }
