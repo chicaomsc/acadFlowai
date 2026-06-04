@@ -188,12 +188,13 @@ function hydrateProject(project: Project): Project & { advisorName?: string } {
   const advisor = project.advisorId
     ? mockDb.advisors.find((item) => item.id === project.advisorId)
     : undefined
+  const mainChapters = mockDb.chapters.filter((chapter) => chapter.projectId === project.id && (chapter.level ?? 1) === 1)
 
   return {
     ...project,
     advisorName: advisor?.name,
     progress: calculateProjectProgress(
-      mockDb.chapters.filter((chapter) => chapter.projectId === project.id),
+      mainChapters,
     ),
   }
 }
@@ -225,9 +226,10 @@ export async function getProjectDetails(projectId: string): Promise<ProjectDetai
       const project = mockDb.projects.find((item) => item.id === projectId)
       if (!project) return null
       const chapters = mockDb.chapters.filter((chapter) => chapter.projectId === projectId)
+      const mainChapters = chapters.filter((chapter) => (chapter.level ?? 1) === 1)
       const references = mockDb.references.filter((reference) => reference.projectId === projectId)
       const timelineTasks = mockDb.timelineTasks.filter((task) => task.projectId === projectId)
-      const exportStatus = validateExportStatus(project, chapters, references, timelineTasks, 'docx')
+      const exportStatus = validateExportStatus(project, mainChapters, references, timelineTasks, 'docx')
 
       return {
         project: {
@@ -303,6 +305,7 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectD
         projectId,
         title: chapter.title,
         type: chapter.type,
+        level: 1,
         content: '',
         status: 'not_started' as const,
         order: index + 1,

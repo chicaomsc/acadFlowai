@@ -303,4 +303,97 @@ class ChapterRendererTest {
         assertThat(text).doesNotContain("[[@CITE:");
         assertThat(text).doesNotContain("[[@FIG:");
     }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Section (level=2) rendering tests
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private Chapter buildSection(Chapter parent, String title, int sectionOrder, String content) {
+        return Chapter.builder().id(UUID.randomUUID()).project(buildProject())
+                .parent(parent).title(title).type(parent.getType())
+                .status(content != null ? ChapterStatus.WRITING : ChapterStatus.NOT_STARTED)
+                .level(2).orderIndex(0).sectionOrder(sectionOrder)
+                .wordCount(0).targetWordCount(2000).content(content).build();
+    }
+
+    @Test
+    void shouldRenderSectionAfterParentChapter() {
+        Chapter intro = buildChapter("Introdução ao tema.");
+        Chapter section = buildSection(intro, "Contextualização", 1, "Texto da seção.");
+
+        XWPFDocument doc = new XWPFDocument();
+        renderer.render(doc, List.of(intro, section), Map.of());
+
+        String text = extractAllRunText(doc);
+        assertThat(text).contains("INTRODUÇÃO");
+        assertThat(text).contains("1.1  Contextualização");
+        assertThat(text).contains("Texto da seção.");
+    }
+
+    @Test
+    void shouldNotAddPageBreakBeforeSection() {
+        Chapter intro = buildChapter("Texto.");
+        Chapter section = buildSection(intro, "Seção Única", 1, "Conteúdo.");
+
+        XWPFDocument doc = new XWPFDocument();
+        renderer.render(doc, List.of(intro, section), Map.of());
+
+        long pageBreaks = doc.getParagraphs().stream()
+                .filter(XWPFParagraph::isPageBreak)
+                .count();
+        // only one page break: before the top-level chapter
+        assertThat(pageBreaks).isEqualTo(1);
+    }
+
+    @Test
+    void shouldNotRenderSectionAsIndependentChapter() {
+        Chapter intro = buildChapter("Texto.");
+        Chapter section = buildSection(intro, "Sub", 1, null);
+
+        XWPFDocument doc = new XWPFDocument();
+        renderer.render(doc, List.of(intro, section), Map.of());
+
+        // section title must NOT appear uppercased as a top-level heading
+        String text = extractAllRunText(doc);
+        assertThat(text).doesNotContain("SUB");
+        assertThat(text).contains("Sub");
+    }
+
+    @Test
+    void shouldRenderMultipleSections() {
+        Chapter intro = buildChapter("Texto.");
+        Chapter s1 = buildSection(intro, "Primeira Seção", 1, "Conteúdo 1.");
+        Chapter s2 = buildSection(intro, "Segunda Seção", 2, "Conteúdo 2.");
+
+        XWPFDocument doc = new XWPFDocument();
+        renderer.render(doc, List.of(intro, s1, s2), Map.of());
+
+        String text = extractAllRunText(doc);
+        assertThat(text).contains("1.1  Primeira Seção");
+        assertThat(text).contains("1.2  Segunda Seção");
+        assertThat(text).contains("Conteúdo 1.");
+        assertThat(text).contains("Conteúdo 2.");
+    }
+
+    @Test
+    void shouldRenderMultipleChaptersWithSections() {
+        Chapter intro = buildChapter("Introdução.");
+        Chapter methodology = Chapter.builder().id(UUID.randomUUID()).project(buildProject())
+                .title("Metodologia").type(ChapterType.METHODOLOGY)
+                .status(ChapterStatus.WRITING).orderIndex(2)
+                .wordCount(0).targetWordCount(2000).content("Metodologia.").build();
+        Chapter s1 = buildSection(intro, "Contexto", 1, "Ctx.");
+        Chapter s2 = buildSection(methodology, "Instrumentos", 1, "Instr.");
+
+        XWPFDocument doc = new XWPFDocument();
+        renderer.render(doc, List.of(intro, methodology, s1, s2), Map.of());
+
+        String text = extractAllRunText(doc);
+        assertThat(text).contains("1.1  Contexto");
+        assertThat(text).contains("2.1  Instrumentos");
+        // two page breaks: one per top-level chapter
+        long pageBreaks = doc.getParagraphs().stream()
+                .filter(XWPFParagraph::isPageBreak).count();
+        assertThat(pageBreaks).isEqualTo(2);
+    }
 }

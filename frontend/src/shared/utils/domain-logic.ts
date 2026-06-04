@@ -21,9 +21,10 @@ export function countWords(text: string): number {
 }
 
 export function calculateProjectProgress(chapters: Chapter[]): number {
-  if (chapters.length === 0) return 0
-  const total = chapters.reduce((sum, chapter) => sum + chapterWeights[chapter.status], 0)
-  return Math.round((total / chapters.length) * 100)
+  const mainChapters = chapters.filter((chapter) => (chapter.level ?? 1) === 1)
+  if (mainChapters.length === 0) return 0
+  const total = mainChapters.reduce((sum, chapter) => sum + chapterWeights[chapter.status], 0)
+  return Math.round((total / mainChapters.length) * 100)
 }
 
 export function calculateProjectStats(
@@ -33,17 +34,18 @@ export function calculateProjectStats(
   _tasks: TimelineTask[],
   weeklyProgress: WeeklyProgress[],
 ): DashboardStats {
-  const pendingReviews = chapters.filter((chapter) => chapter.status === 'review').length
-  const chaptersCompleted = chapters.filter((chapter) => chapter.status === 'approved').length
+  const mainChapters = chapters.filter((chapter) => (chapter.level ?? 1) === 1)
+  const pendingReviews = mainChapters.filter((chapter) => chapter.status === 'review').length
+  const chaptersCompleted = mainChapters.filter((chapter) => chapter.status === 'approved').length
   const daysUntilDeadline = Math.max(
     0,
     Math.ceil((project.deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
   )
 
   return {
-    totalProgress: calculateProjectProgress(chapters),
+    totalProgress: calculateProjectProgress(mainChapters),
     chaptersCompleted,
-    totalChapters: chapters.length,
+    totalChapters: mainChapters.length,
     referencesCount: references.length,
     pendingReviews,
     daysUntilDeadline,
@@ -58,13 +60,14 @@ export function validateExportStatus(
   tasks: TimelineTask[],
   format: ExportFormat,
 ): ExportStatus {
-  const completedChapters = chapters.filter(
+  const mainChapters = chapters.filter((chapter) => (chapter.level ?? 1) === 1)
+  const completedChapters = mainChapters.filter(
     (chapter) => chapter.status === 'approved' || chapter.status === 'review',
   )
   const citedReferences = references.filter((reference) => reference.hasCitation)
   const pendingItems: string[] = []
 
-  if (completedChapters.length < chapters.length) {
+  if (completedChapters.length < mainChapters.length) {
     pendingItems.push('Há capítulos ainda sem desenvolvimento final.')
   }
 
@@ -76,12 +79,12 @@ export function validateExportStatus(
     pendingItems.push('O cronograma ainda possui tarefas prioritárias em aberto.')
   }
 
-  if (format === 'slides' && completedChapters.length < Math.max(1, chapters.length - 1)) {
+  if (format === 'slides' && completedChapters.length < Math.max(1, mainChapters.length - 1)) {
     pendingItems.push('Os slides pedem mais capítulos consolidados antes da defesa.')
   }
 
   const completedItems = [
-    completedChapters.length >= Math.max(1, chapters.length - 2) ? 'Estrutura principal do projeto consolidada.' : null,
+    completedChapters.length >= Math.max(1, mainChapters.length - 2) ? 'Estrutura principal do projeto consolidada.' : null,
     citedReferences.length > 0 ? 'Base bibliográfica vinculada ao texto.' : null,
     project.norm === 'ABNT' ? 'Norma acadêmica definida para exportação.' : null,
   ].filter(Boolean) as string[]
@@ -91,9 +94,9 @@ export function validateExportStatus(
     Math.min(
       100,
       Math.round(
-        ((completedChapters.length / Math.max(chapters.length, 1)) * 0.6 +
-          (citedReferences.length / Math.max(references.length, 1)) * 0.25 +
-          (tasks.filter((task) => task.status === 'completed').length / Math.max(tasks.length, 1)) * 0.15) *
+          ((completedChapters.length / Math.max(mainChapters.length, 1)) * 0.6 +
+            (citedReferences.length / Math.max(references.length, 1)) * 0.25 +
+            (tasks.filter((task) => task.status === 'completed').length / Math.max(tasks.length, 1)) * 0.15) *
           100,
       ),
     ),
@@ -107,7 +110,7 @@ export function validateExportStatus(
     pendingItems,
     completedItems,
     chapterCoverage: {
-      total: chapters.length,
+      total: mainChapters.length,
       completed: completedChapters.length,
     },
     referenceCoverage: {

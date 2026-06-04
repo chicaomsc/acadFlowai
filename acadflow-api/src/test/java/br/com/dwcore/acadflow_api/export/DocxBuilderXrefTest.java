@@ -222,4 +222,52 @@ class DocxBuilderXrefTest {
             assertThat(text).doesNotContain("[[@XREF:");
         }
     }
+
+    @Test
+    void shouldRenderXrefSectionAsInlineNumberedText() throws Exception {
+        User user = buildUser();
+        Project project = buildProject(user);
+        Chapter intro = chapter(project, ChapterType.INTRODUCTION, "Introdução", 1, "Texto.");
+        Chapter section = Chapter.builder().id(UUID.randomUUID()).project(project)
+                .parent(intro).title("Contextualização").type(ChapterType.INTRODUCTION)
+                .status(ChapterStatus.NOT_STARTED).orderIndex(0).sectionOrder(1).level(2)
+                .wordCount(0).targetWordCount(2000).build();
+
+        String content = "Conforme [[@XREF:SECTION:" + section.getId() + "]], a análise...";
+        Chapter methodology = chapter(project, ChapterType.METHODOLOGY, "Metodologia", 2, content);
+
+        byte[] result = docxBuilder.build(project,
+                List.of(intro, methodology, section), List.of(), Map.of(), Map.of(), Map.of());
+
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(result))) {
+            String text = allText(doc);
+            assertThat(text).contains("Seção 1.1");
+            assertThat(text).doesNotContain("[[@XREF:");
+        }
+    }
+
+    @Test
+    void shouldRenderXrefSectionFromChapter2AsSeção2Point1() throws Exception {
+        User user = buildUser();
+        Project project = buildProject(user);
+        Chapter intro = chapter(project, ChapterType.INTRODUCTION, "Introdução", 1, "Texto.");
+        Chapter methodology = chapter(project, ChapterType.METHODOLOGY, "Metodologia", 2, "Texto.");
+        Chapter section = Chapter.builder().id(UUID.randomUUID()).project(project)
+                .parent(methodology).title("Instrumentos").type(ChapterType.METHODOLOGY)
+                .status(ChapterStatus.NOT_STARTED).orderIndex(0).sectionOrder(1).level(2)
+                .wordCount(0).targetWordCount(2000).build();
+
+        String content = "Ver [[@XREF:SECTION:" + section.getId() + "]] para detalhes.";
+        Chapter conclusion = chapter(project, ChapterType.CONCLUSION, "Conclusão", 3, content);
+
+        byte[] result = docxBuilder.build(project,
+                List.of(intro, methodology, conclusion, section), List.of(),
+                Map.of(), Map.of(), Map.of());
+
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(result))) {
+            String text = allText(doc);
+            assertThat(text).contains("Seção 2.1");
+            assertThat(text).doesNotContain("[[@XREF:");
+        }
+    }
 }

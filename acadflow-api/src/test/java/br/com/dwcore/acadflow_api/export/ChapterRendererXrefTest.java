@@ -189,4 +189,31 @@ class ChapterRendererXrefTest {
         assertThat(text).contains("[referência inválida]");
         assertThat(text).doesNotContain("[[@XREF:");
     }
+
+    @Test
+    void shouldRenderXrefSectionAsInlineText() {
+        UUID sectionId = UUID.randomUUID();
+        Map<UUID, String> xrefLookup = Map.of(sectionId, "Seção 1.1");
+
+        XWPFDocument doc = new XWPFDocument();
+        renderer.render(doc, List.of(chapter("Conforme [[@XREF:SECTION:" + sectionId + "]], o estudo...")),
+                Map.of(), Map.of(), Map.of(), AcademicTemplateRegistry.ABNT_GENERIC, xrefLookup);
+
+        String text = allText(doc);
+        assertThat(text).contains("Seção 1.1");
+        assertThat(text).doesNotContain("[[@XREF:");
+    }
+
+    @Test
+    void shouldRenderFallbackForUnknownSectionXref() {
+        UUID unknownSectionId = UUID.randomUUID();
+
+        XWPFDocument doc = new XWPFDocument();
+        renderer.render(doc, List.of(chapter("Ver [[@XREF:SECTION:" + unknownSectionId + "]].")),
+                Map.of(), Map.of(), Map.of(), AcademicTemplateRegistry.ABNT_GENERIC, Map.of());
+
+        String text = allText(doc);
+        assertThat(text).contains("[referência inválida]");
+        assertThat(text).doesNotContain("[[@XREF:");
+    }
 }

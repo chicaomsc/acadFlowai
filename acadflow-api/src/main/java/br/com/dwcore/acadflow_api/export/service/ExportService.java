@@ -63,7 +63,7 @@ public class ExportService {
     );
 
     private static final Pattern XREF_MARKER = Pattern.compile(
-            "\\[\\[@XREF:(FIG|TABLE|QUADRO|CHAPTER):(" + UUID_PAT + ")\\]\\]"
+            "\\[\\[@XREF:(FIG|TABLE|QUADRO|CHAPTER|SECTION):(" + UUID_PAT + ")\\]\\]"
     );
 
     private static final Set<ChapterType> REQUIRED_TEXTUAL_TYPES = Set.of(
@@ -226,7 +226,8 @@ public class ExportService {
 
     private int checkTextualChapters(List<Chapter> chapters, List<String> pending, List<String> completed) {
         List<Chapter> required = chapters.stream()
-                .filter(c -> REQUIRED_TEXTUAL_TYPES.contains(c.getType()))
+                .filter(c -> (c.getLevel() == null || c.getLevel() <= 1)
+                        && REQUIRED_TEXTUAL_TYPES.contains(c.getType()))
                 .toList();
 
         if (required.isEmpty()) {
@@ -340,7 +341,12 @@ public class ExportService {
                 .stream().map(Figure::getId).collect(Collectors.toSet());
         Set<UUID> knownTables = tableRepository.findByProjectIdOrderByCreatedAtAsc(projectId)
                 .stream().map(AcademicTable::getId).collect(Collectors.toSet());
-        Set<UUID> knownChapters = chapters.stream().map(Chapter::getId).collect(Collectors.toSet());
+        Set<UUID> knownChapters = chapters.stream()
+                .filter(c -> c.getLevel() == null || c.getLevel() <= 1)
+                .map(Chapter::getId).collect(Collectors.toSet());
+        Set<UUID> knownSections = chapters.stream()
+                .filter(c -> Integer.valueOf(2).equals(c.getLevel()))
+                .map(Chapter::getId).collect(Collectors.toSet());
 
         for (Chapter chapter : chapters) {
             if (chapter.getContent() == null || chapter.getContent().isBlank()) continue;
@@ -353,6 +359,7 @@ public class ExportService {
                     case "FIG"              -> knownFigures.contains(targetId);
                     case "TABLE", "QUADRO"  -> knownTables.contains(targetId);
                     case "CHAPTER"          -> knownChapters.contains(targetId);
+                    case "SECTION"          -> knownSections.contains(targetId);
                     default                 -> false;
                 };
                 if (!valid) {

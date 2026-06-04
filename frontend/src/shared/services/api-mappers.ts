@@ -41,6 +41,9 @@ export interface ApiChapterResponse {
   title: string
   type: string
   content: string | null
+  level?: number | null
+  parentId?: string | null
+  sectionOrder?: number | null
   status: string
   orderIndex: number
   wordCount: number
@@ -228,6 +231,9 @@ export function mapApiChapter(chapter: ApiChapterResponse): Chapter {
     title: chapter.title,
     type: normalizeChapterType(chapter.type),
     content: chapter.content ?? '',
+    level: chapter.level === 2 ? 2 : 1,
+    parentId: chapter.parentId ?? undefined,
+    sectionOrder: chapter.sectionOrder ?? undefined,
     status: normalizeChapterStatus(chapter.status),
     order: chapter.orderIndex,
     wordCount: chapter.wordCount ?? 0,

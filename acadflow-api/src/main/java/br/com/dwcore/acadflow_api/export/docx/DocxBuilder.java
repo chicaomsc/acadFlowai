@@ -3,7 +3,6 @@ package br.com.dwcore.acadflow_api.export.docx;
 import br.com.dwcore.acadflow_api.academictable.domain.AcademicTable;
 import br.com.dwcore.acadflow_api.academictable.domain.AcademicTableType;
 import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
-import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
 import br.com.dwcore.acadflow_api.citation.domain.Citation;
 import br.com.dwcore.acadflow_api.export.docx.dto.LoadedFigure;
 import br.com.dwcore.acadflow_api.export.docx.dto.NumberedFigure;
@@ -148,12 +147,7 @@ public class DocxBuilder {
             String label = nt.table().getType() == AcademicTableType.TABLE ? "Tabela " : "Quadro ";
             lookup.put(nt.table().getId(), label + nt.number());
         }
-        int chapterNum = 1;
-        for (Chapter chapter : chapters) {
-            if (chapter.getType() != ChapterType.REFERENCES) {
-                lookup.put(chapter.getId(), "Capítulo " + chapterNum++);
-            }
-        }
+        lookup.putAll(new AcademicNumberingService().computeXrefLabels(chapters));
         return lookup;
     }
 
