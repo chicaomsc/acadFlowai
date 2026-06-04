@@ -100,6 +100,20 @@ public final class DocxHelper {
         return p;
     }
 
+    /** Sub-section heading (level 2): bold, 12pt, left-aligned, mixed case — no toUpperCase. */
+    public static XWPFParagraph subSectionHeading(XWPFDocument doc, String text) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setStyle(STYLE_HEADING);
+        p.setAlignment(ParagraphAlignment.LEFT);
+        p.setSpacingBetween(SPACING_BODY, LineSpacingRule.AUTO);
+        p.setSpacingBefore(SPC_AFTER_HEADING);
+        p.setSpacingAfter(SPC_AFTER_HEADING);
+        XWPFRun run = p.createRun();
+        applyFont(run, FONT_BODY, true);
+        run.setText(text != null ? text : "");
+        return p;
+    }
+
     /** 10 pt centered paragraph — for figure captions and source lines. */
     public static XWPFParagraph captionParagraph(XWPFDocument doc, String text) {
         XWPFParagraph p = doc.createParagraph();

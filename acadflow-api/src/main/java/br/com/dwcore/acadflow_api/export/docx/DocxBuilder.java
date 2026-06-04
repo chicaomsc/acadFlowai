@@ -1,6 +1,7 @@
 package br.com.dwcore.acadflow_api.export.docx;
 
 import br.com.dwcore.acadflow_api.academictable.domain.AcademicTable;
+import br.com.dwcore.acadflow_api.academictable.domain.AcademicTableType;
 import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
 import br.com.dwcore.acadflow_api.citation.domain.Citation;
 import br.com.dwcore.acadflow_api.export.docx.dto.LoadedFigure;
@@ -91,6 +92,8 @@ public class DocxBuilder {
             numberedTableLookup.put(nt.table().getId(), nt);
         }
 
+        Map<UUID, String> xrefLookup = computeCrossRefLookup(orderedFigures, orderedTables, chapters);
+
         try (XWPFDocument doc = new XWPFDocument()) {
             DocxStylesFactory.register(doc);
             DocxHelper.setupPageMargins(doc);
@@ -120,7 +123,7 @@ public class DocxBuilder {
             summaryRenderer.render(doc, chapters, template);
 
             chapterRenderer.render(doc, chapters, citationLookup, numberedFigureLookup,
-                    numberedTableLookup, template);
+                    numberedTableLookup, template, xrefLookup);
 
             if (!references.isEmpty()) {
                 DocxHelper.pageBreak(doc);
@@ -131,6 +134,21 @@ public class DocxBuilder {
             doc.write(out);
             return out.toByteArray();
         }
+    }
+
+    private Map<UUID, String> computeCrossRefLookup(List<NumberedFigure> orderedFigures,
+                                                     List<NumberedTable> orderedTables,
+                                                     List<Chapter> chapters) {
+        Map<UUID, String> lookup = new LinkedHashMap<>();
+        for (NumberedFigure nf : orderedFigures) {
+            lookup.put(nf.figure().getId(), "Figura " + nf.number());
+        }
+        for (NumberedTable nt : orderedTables) {
+            String label = nt.table().getType() == AcademicTableType.TABLE ? "Tabela " : "Quadro ";
+            lookup.put(nt.table().getId(), label + nt.number());
+        }
+        lookup.putAll(new AcademicNumberingService().computeXrefLabels(chapters));
+        return lookup;
     }
 
     private List<NumberedFigure> computeOrderedFigures(List<Chapter> chapters,

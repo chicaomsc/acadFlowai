@@ -5,7 +5,10 @@ import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
 import br.com.dwcore.acadflow_api.citation.domain.Citation;
 import br.com.dwcore.acadflow_api.citation.domain.CitationType;
 import br.com.dwcore.acadflow_api.citation.service.CitationFormatter;
+import br.com.dwcore.acadflow_api.export.docx.AcademicNumberingService;
 import br.com.dwcore.acadflow_api.export.docx.DocxHelper;
+import br.com.dwcore.acadflow_api.export.docx.DocumentStructureBuilder;
+import br.com.dwcore.acadflow_api.export.docx.dto.CrossRef;
 import br.com.dwcore.acadflow_api.export.docx.dto.NumberedFigure;
 import br.com.dwcore.acadflow_api.export.docx.dto.NumberedTable;
 import br.com.dwcore.acadflow_api.export.template.AcademicTemplate;
@@ -41,6 +44,10 @@ public class ChapterRenderer {
             "\\[\\[@(?:TABLE|QUADRO):(" + UUID_PATTERN + ")\\]\\]"
     );
 
+    private static final Pattern XREF_PATTERN = Pattern.compile(
+            "\\[\\[@XREF:(?:FIG|TABLE|QUADRO|CHAPTER|SECTION):" + UUID_PATTERN + "\\]\\]"
+    );
+
     private final TableRenderer tableRenderer = new TableRenderer();
 
     // Text area width: A4 (21cm) - left margin (3cm) - right margin (2cm) = 16cm
@@ -72,23 +79,50 @@ public class ChapterRenderer {
                        Map<UUID, NumberedFigure> numberedFigureLookup,
                        Map<UUID, NumberedTable> numberedTableLookup,
                        AcademicTemplate template) {
-        int number = 1;
-        for (Chapter chapter : chapters) {
+        render(doc, chapters, citationLookup, numberedFigureLookup, numberedTableLookup, template, Map.of());
+    }
+
+    public void render(XWPFDocument doc, List<Chapter> chapters,
+                       Map<UUID, Citation> citationLookup,
+                       Map<UUID, NumberedFigure> numberedFigureLookup,
+                       Map<UUID, NumberedTable> numberedTableLookup,
+                       AcademicTemplate template,
+                       Map<UUID, String> xrefLookup) {
+
+        AcademicNumberingService numbering = new AcademicNumberingService();
+        Map<UUID, Integer> chapterNumbers = numbering.computeChapterNumbers(chapters);
+        Map<UUID, String> sectionNumbers = numbering.computeSectionNumbers(chapters, chapterNumbers);
+
+        DocumentStructureBuilder builder = new DocumentStructureBuilder();
+        for (DocumentStructureBuilder.ChapterNode node : builder.build(chapters)) {
+            Chapter chapter = node.chapter();
             if (chapter.getType() == ChapterType.REFERENCES) continue;
 
+            Integer chNum = chapterNumbers.get(chapter.getId());
             DocxHelper.pageBreak(doc);
+            DocxHelper.sectionHeading(doc, chNum + "  " + chapter.getTitle());
+            renderContent(doc, chapter, citationLookup, numberedFigureLookup, numberedTableLookup, xrefLookup);
 
-            String heading = number + "  " + chapter.getTitle().toUpperCase();
-            DocxHelper.sectionHeading(doc, heading);
-            number++;
+            for (Chapter section : node.sections()) {
+                String sNum = sectionNumbers.getOrDefault(section.getId(), "?");
+                DocxHelper.subSectionHeading(doc, sNum + "  " + section.getTitle());
+                renderContent(doc, section, citationLookup, numberedFigureLookup, numberedTableLookup, xrefLookup);
+            }
+        }
+    }
 
-            String content = chapter.getContent();
-            if (content != null && !content.isBlank()) {
-                for (String block : content.split("\\n\\n+")) {
-                    String trimmedBlock = block.trim();
-                    if (trimmedBlock.isEmpty()) continue;
-                    renderBlock(doc, trimmedBlock, citationLookup, numberedFigureLookup, numberedTableLookup);
-                }
+    private void renderContent(XWPFDocument doc, Chapter chapter,
+                                Map<UUID, Citation> citationLookup,
+                                Map<UUID, NumberedFigure> numberedFigureLookup,
+                                Map<UUID, NumberedTable> numberedTableLookup,
+                                Map<UUID, String> xrefLookup) {
+        String content = chapter.getContent();
+        if (content != null && !content.isBlank()) {
+            for (String block : content.split("\\n\\n+")) {
+                String trimmedBlock = block.trim();
+                if (trimmedBlock.isEmpty()) continue;
+                renderBlock(doc, trimmedBlock, citationLookup, numberedFigureLookup,
+                        numberedTableLookup, xrefLookup);
             }
         }
     }
@@ -96,17 +130,20 @@ public class ChapterRenderer {
     private void renderBlock(XWPFDocument doc, String block,
                               Map<UUID, Citation> citationLookup,
                               Map<UUID, NumberedFigure> numberedFigureLookup,
-                              Map<UUID, NumberedTable> numberedTableLookup) {
+                              Map<UUID, NumberedTable> numberedTableLookup,
+                              Map<UUID, String> xrefLookup) {
         boolean hasCite  = !citationLookup.isEmpty() && CITE_PATTERN.matcher(block).find();
         boolean hasFig   = !numberedFigureLookup.isEmpty() && FIG_PATTERN.matcher(block).find();
         boolean hasTable = !numberedTableLookup.isEmpty() && TABLE_QUADRO_PATTERN.matcher(block).find();
+        boolean hasXref  = XREF_PATTERN.matcher(block).find();
 
-        if (!hasCite && !hasFig && !hasTable) {
+        if (!hasCite && !hasFig && !hasTable && !hasXref) {
             renderPlainBlock(doc, block);
             return;
         }
 
-        List<Object> tokens = tokenize(block, citationLookup, numberedFigureLookup, numberedTableLookup);
+        List<Object> tokens = tokenize(block, citationLookup, numberedFigureLookup,
+                numberedTableLookup, xrefLookup);
         XWPFParagraph current = null;
 
         for (Object token : tokens) {
@@ -127,6 +164,10 @@ public class ChapterRenderer {
                     XWPFRun run = current.createRun();
                     DocxHelper.applyFont(run, DocxHelper.FONT_BODY, false);
                     run.setText(CitationFormatter.format(c));
+                } else if (token instanceof CrossRef xref) {
+                    XWPFRun run = current.createRun();
+                    DocxHelper.applyFont(run, DocxHelper.FONT_BODY, false);
+                    run.setText(xref.displayText());
                 }
             }
         }
@@ -219,9 +260,10 @@ public class ChapterRenderer {
     private List<Object> tokenize(String block,
                                    Map<UUID, Citation> citationLookup,
                                    Map<UUID, NumberedFigure> numberedFigureLookup,
-                                   Map<UUID, NumberedTable> numberedTableLookup) {
+                                   Map<UUID, NumberedTable> numberedTableLookup,
+                                   Map<UUID, String> xrefLookup) {
         Pattern combined = Pattern.compile(
-                "\\[\\[@(CITE|FIG|TABLE|QUADRO):(" + UUID_PATTERN + ")\\]\\]"
+                "\\[\\[@(CITE|FIG|TABLE|QUADRO|XREF:FIG|XREF:TABLE|XREF:QUADRO|XREF:CHAPTER|XREF:SECTION):(" + UUID_PATTERN + ")\\]\\]"
         );
 
         List<Object> tokens = new ArrayList<>();
@@ -241,6 +283,9 @@ public class ChapterRenderer {
             } else if ("FIG".equals(type)) {
                 NumberedFigure nf = numberedFigureLookup.get(id);
                 tokens.add(nf != null ? nf : m.group(0));
+            } else if (type.startsWith("XREF:")) {
+                String displayText = xrefLookup.getOrDefault(id, "[referência inválida]");
+                tokens.add(new CrossRef(displayText));
             } else {
                 NumberedTable nt = numberedTableLookup.get(id);
                 tokens.add(nt != null ? nt : m.group(0));

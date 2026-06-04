@@ -1,17 +1,19 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { configure, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as citationService from '@/shared/services/citation.service'
 import * as figureService from '@/shared/services/figure.service'
 import * as tableService from '@/shared/services/table.service'
-import { buildCitationAbntPreview, EditorPage, extractCitationIds, extractFigureIds, extractQuadroIds, extractTableIds, validateTabularElementForm } from '@/features/editor/pages/editor-page'
+import { buildCitationAbntPreview, EditorPage, extractCitationIds, extractCrossReferenceTargets, extractFigureIds, extractQuadroIds, extractTableIds, validateTabularElementForm } from '@/features/editor/pages/editor-page'
 import { mockDb } from '@/shared/mocks/database'
-import { getChapter, updateChapterContent } from '@/shared/services/chapter.service'
+import { createSection, getChapter, updateChapterContent } from '@/shared/services/chapter.service'
 import { getChapterCitations } from '@/shared/services/citation.service'
 import { getReferences } from '@/shared/services/reference.service'
 import { renderWithRouter } from '@/test/render-utils'
 
 describe('editor page', () => {
+  configure({ asyncUtilTimeout: 3000 })
+
   beforeEach(async () => {
     vi.restoreAllMocks()
     mockDb.citations.splice(0, mockDb.citations.length, {
@@ -71,6 +73,11 @@ describe('editor page', () => {
         createdAt: new Date('2024-03-22'),
       },
     )
+    mockDb.chapters.splice(
+      0,
+      mockDb.chapters.length,
+      ...mockDb.chapters.filter((chapter) => (chapter.level ?? 1) === 1).map((chapter) => ({ ...chapter, level: 1 as const })),
+    )
     await updateChapterContent('chapter-1', 'A educação superior enfrenta desafios significativos no século XXI, especialmente no que diz respeito à personalização do ensino e ao acompanhamento individualizado dos estudantes. Nesse contexto, os Sistemas de Tutoria Inteligente emergem como uma solução promissora, combinando técnicas de Inteligência Artificial com teorias pedagógicas para oferecer experiências de aprendizagem adaptativas.\n\nEste trabalho propõe uma análise aprofundada sobre a aplicação de sistemas de tutoria inteligente no contexto da educação superior brasileira, investigando seus impactos no desempenho acadêmico e na experiência de aprendizagem dos estudantes.')
     await updateChapterContent('chapter-2', '2.1 Inteligência Artificial na Educação\n\nA aplicação de Inteligência Artificial na educação não é um fenômeno recente. Desde os primeiros sistemas especialistas da década de 1970, pesquisadores exploram formas de utilizar a tecnologia para personalizar e otimizar o processo de ensino-aprendizagem.\n\n2.2 Sistemas de Tutoria Inteligente\n\nOs Sistemas de Tutoria Inteligente são ambientes computacionais projetados para simular o comportamento de um tutor humano, oferecendo instrução personalizada e feedback adaptativo aos estudantes.')
     await updateChapterContent('chapter-3', '')
@@ -87,6 +94,16 @@ describe('editor page', () => {
   it('extrai ids de tabelas e quadros a partir dos marcadores no texto', () => {
     expect(extractTableIds('Texto [[@TABLE:table-1]] e [[@TABLE:table-abc]].')).toEqual(['table-1', 'table-abc'])
     expect(extractQuadroIds('Texto [[@QUADRO:quadro-1]] e [[@QUADRO:quadro-abc]].')).toEqual(['quadro-1', 'quadro-abc'])
+  })
+
+  it('extrai referências cruzadas a partir dos marcadores no texto', () => {
+    expect(extractCrossReferenceTargets('Texto [[@XREF:FIG:figure-1]] e [[@XREF:TABLE:table-1]] e [[@XREF:QUADRO:quadro-1]] e [[@XREF:CHAPTER:chapter-1]] e [[@XREF:SECTION:section-1]].')).toEqual([
+      { kind: 'FIG', targetId: 'figure-1' },
+      { kind: 'TABLE', targetId: 'table-1' },
+      { kind: 'QUADRO', targetId: 'quadro-1' },
+      { kind: 'CHAPTER', targetId: 'chapter-1' },
+      { kind: 'SECTION', targetId: 'section-1' },
+    ])
   })
 
   it('valida grade de tabela/quadro exigindo cabeçalhos e pelo menos uma linha com conteúdo', () => {
@@ -146,10 +163,10 @@ describe('editor page', () => {
       { path: '/editor/:projectId/:nodeId', element: <EditorPage /> },
     ], ['/editor/project-1'])
 
-    expect(await screen.findByRole('heading', { name: 'Introdução' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /fundamentação teórica/i }))
-    expect(await screen.findByRole('heading', { name: 'Fundamentação Teórica' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /fundamentação teórica/i })).toBeInTheDocument()
 
     const textarea = screen.getByRole('textbox', { name: 'Editor do capítulo' })
     await user.clear(textarea)
@@ -169,7 +186,7 @@ describe('editor page', () => {
       ['/editor/project-1/chapter-3'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Metodologia' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /metodologia/i })).toBeInTheDocument()
   })
 
   it('restaura resumo e abstract pela rota após refresh', async () => {
@@ -190,13 +207,170 @@ describe('editor page', () => {
     expect(await screen.findByText('Versão internacional do resumo, com linguagem objetiva e vocabulário acadêmico consistente.')).toBeInTheDocument()
   })
 
+  it('exibe o sumário automático vazio com aviso e capítulos de topo', async () => {
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/toc'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /sumário/i })).toBeInTheDocument()
+    expect(screen.getAllByText('Gerado automaticamente a partir da estrutura do documento.').length).toBeGreaterThan(0)
+    expect(screen.getByText('1 INTRODUÇÃO')).toBeInTheDocument()
+    expect(screen.getByText('2 FUNDAMENTAÇÃO TEÓRICA')).toBeInTheDocument()
+    expect(screen.getByText('3 METODOLOGIA')).toBeInTheDocument()
+    expect(screen.getAllByText('Sem seções vinculadas a este capítulo.').length).toBeGreaterThan(0)
+  })
+
+  it('reconstrói o sumário automático com seções após reload', async () => {
+    await createSection('chapter-1', { title: 'Contextualização', sectionOrder: 1 })
+    await createSection('chapter-1', { title: 'Problema', sectionOrder: 2 })
+    await createSection('chapter-2', { title: 'IA', sectionOrder: 1 })
+
+    const { unmount } = renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/toc'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /sumário/i })).toBeInTheDocument()
+    expect(screen.getByText('1 INTRODUÇÃO')).toBeInTheDocument()
+    expect(screen.getByText('1.1 Contextualização')).toBeInTheDocument()
+    expect(screen.getByText('1.2 Problema')).toBeInTheDocument()
+    expect(screen.getByText('2 FUNDAMENTAÇÃO TEÓRICA')).toBeInTheDocument()
+    expect(screen.getByText('2.1 IA')).toBeInTheDocument()
+
+    unmount()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/toc'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /sumário/i })).toBeInTheDocument()
+    expect(screen.getByText('1 INTRODUÇÃO')).toBeInTheDocument()
+    expect(screen.getByText('1.1 Contextualização')).toBeInTheDocument()
+    expect(screen.getByText('1.2 Problema')).toBeInTheDocument()
+    expect(screen.getByText('2 FUNDAMENTAÇÃO TEÓRICA')).toBeInTheDocument()
+    expect(screen.getByText('2.1 IA')).toBeInTheDocument()
+  })
+
+  it('cria seções em capítulos textuais e renderiza a hierarquia com numeração visual', async () => {
+    const sectionOne = await createSection('chapter-1', { title: 'Contextualização', sectionOrder: 1 })
+    const sectionTwo = await createSection('chapter-2', { title: 'Problema de pesquisa', sectionOrder: 2 })
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
+    expect(screen.getByText(/1\.1 • 0 palavras/i)).toBeInTheDocument()
+    expect(screen.getByText(/2\.2 • 0 palavras/i)).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /contextualização/i }))
+
+    expect(await screen.findByRole('heading', { name: /contextualização/i })).toBeInTheDocument()
+    expect(screen.getByText('Subseção de Introdução.')).toBeInTheDocument()
+
+    await waitFor(async () => {
+      expect(await getChapter(sectionOne.id)).not.toBeNull()
+      expect(await getChapter(sectionTwo.id)).not.toBeNull()
+    })
+  })
+
+  it('permite editar o título e o conteúdo de uma seção com autosave', async () => {
+    const user = userEvent.setup()
+    const section = await createSection('chapter-2', { title: 'Inteligência Artificial', sectionOrder: 1 })
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-2'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /fundamentação teórica/i })).toBeInTheDocument()
+    await user.click(screen.getAllByRole('button', { name: /inteligência artificial/i })[0])
+
+    expect(await screen.findByRole('heading', { name: /inteligência artificial/i })).toBeInTheDocument()
+
+    const titleInput = screen.getByDisplayValue('Inteligência Artificial')
+    await user.clear(titleInput)
+    await user.type(titleInput, 'IA e aprendizagem')
+    await user.tab()
+
+    await waitFor(async () => {
+      const updatedSection = await getChapter(section.id)
+      expect(updatedSection?.title).toBe('IA e aprendizagem')
+    })
+
+    const editor = screen.getByRole('textbox', { name: 'Editor do capítulo' })
+    await user.clear(editor)
+    await user.type(editor, 'Conteúdo da seção salvo pelo autosave.')
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedSection = await getChapter(section.id)
+      expect(updatedSection?.content).toBe('Conteúdo da seção salvo pelo autosave.')
+      expect(updatedSection?.wordCount).toBeGreaterThan(0)
+    })
+  })
+
+  it('exclui seção e retorna para o capítulo pai mantendo a hierarquia estável', async () => {
+    const user = userEvent.setup()
+    const section = await createSection('chapter-1', { title: 'Problema de pesquisa', sectionOrder: 1 })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('heading', { name: /introdução/i })
+    await user.click(screen.getByRole('button', { name: /problema de pesquisa/i }))
+    expect(await screen.findByRole('heading', { name: /problema de pesquisa/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /excluir seção/i }))
+
+    await waitFor(async () => {
+      expect(await getChapter(section.id)).toBeNull()
+    })
+
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /problema de pesquisa/i })).not.toBeInTheDocument()
+    expect(confirmSpy).toHaveBeenCalled()
+  })
+
+  it('recarrega a hierarquia de seções após o refresh sem perder a numeração visual', async () => {
+    await createSection('chapter-1', { title: 'Contextualização', sectionOrder: 1 })
+    await createSection('chapter-2', { title: 'Problema de pesquisa', sectionOrder: 2 })
+
+    const { unmount } = renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
+    expect(screen.getByText(/1\.1 • 0 palavras/i)).toBeInTheDocument()
+    expect(screen.getByText(/2\.2 • 0 palavras/i)).toBeInTheDocument()
+
+    unmount()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
+    expect(screen.getByText(/1\.1 • 0 palavras/i)).toBeInTheDocument()
+    expect(screen.getByText(/2\.2 • 0 palavras/i)).toBeInTheDocument()
+  })
+
   it('cai para o primeiro capítulo válido quando o chapterId da rota é inválido', async () => {
     renderWithRouter(
       [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
       ['/editor/project-1/chapter-invalido'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Introdução' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
   })
 
   it('insere e remove citação inline sem quebrar o conteúdo do capítulo', async () => {
@@ -207,7 +381,7 @@ describe('editor page', () => {
       { path: '/editor/:projectId/:nodeId', element: <EditorPage /> },
     ], ['/editor/project-1/chapter-1'])
 
-    expect(await screen.findByRole('heading', { name: 'Introdução' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
 
     const textarea = screen.getByRole('textbox', { name: 'Editor do capítulo' })
     await user.click(textarea)
@@ -250,7 +424,7 @@ describe('editor page', () => {
       { path: '/editor/:projectId/:nodeId', element: <EditorPage /> },
     ], ['/editor/project-1/chapter-1'])
 
-    expect(await screen.findByRole('heading', { name: 'Introdução' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /inserir citação/i }))
 
@@ -295,7 +469,7 @@ describe('editor page', () => {
       ['/editor/project-1/chapter-1'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Introdução' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /inserir figura/i }))
 
     const dialog = await screen.findByRole('dialog', { name: 'Inserir figura' })
@@ -313,7 +487,7 @@ describe('editor page', () => {
       ['/editor/project-1/chapter-1'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Introdução' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
 
     const editor = screen.getByRole('textbox', { name: 'Editor do capítulo' })
     await user.click(editor)
@@ -499,6 +673,133 @@ describe('editor page', () => {
       const updatedChapter = await getChapter('chapter-1')
       expect(updatedChapter?.content).toContain('[[@QUADRO:quadro-api-1]]')
     })
+  })
+
+  it('insere referência cruzada de figura e preserva o marcador bruto', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@FIG:figure-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir referência cruzada/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir referência cruzada' })
+    await user.click(within(dialog).getByRole('button', { name: /inserir referência cruzada/i }))
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    expect(editor.textContent).toContain('Figura 1')
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain('[[@XREF:FIG:figure-1]]')
+    })
+  })
+
+  it('insere referência cruzada de tabela e renderiza inline corretamente', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@TABLE:table-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir referência cruzada/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir referência cruzada' })
+    await user.click(within(dialog).getByRole('button', { name: /tabela/i }))
+    await user.click(within(dialog).getByRole('button', { name: /inserir referência cruzada/i }))
+
+    expect(editor.textContent).toContain('Tabela 1')
+  })
+
+  it('insere referência cruzada de quadro e renderiza inline corretamente', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@QUADRO:quadro-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir referência cruzada/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir referência cruzada' })
+    await user.click(within(dialog).getByRole('button', { name: /quadro/i }))
+    await user.click(within(dialog).getByRole('button', { name: /inserir referência cruzada/i }))
+
+    expect(editor.textContent).toContain('Quadro 1')
+  })
+
+  it('insere referência cruzada de capítulo e renderiza inline como Capítulo N', async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir referência cruzada/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir referência cruzada' })
+    await user.click(within(dialog).getByRole('button', { name: /capítulo/i }))
+    await user.click(within(dialog).getByRole('button', { name: /inserir referência cruzada/i }))
+
+    expect(editor.textContent).toContain('Capítulo 1')
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain('[[@XREF:CHAPTER:chapter-1]]')
+    })
+  })
+
+  it('insere referência cruzada de seção e renderiza inline como Seção N.M', async () => {
+    const user = userEvent.setup()
+    const section = await createSection('chapter-1', { title: 'Contextualização', sectionOrder: 1 })
+
+    const { unmount } = renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    await user.click(editor)
+    await user.click(screen.getByRole('button', { name: /inserir referência cruzada/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Inserir referência cruzada' })
+    await user.click(within(dialog).getByRole('button', { name: /seção/i }))
+    await user.click(within(dialog).getByRole('button', { name: /inserir referência cruzada/i }))
+
+    expect(editor.textContent).toContain('Seção 1.1')
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain(`[[@XREF:SECTION:${section.id}]]`)
+    })
+
+    unmount()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    expect(await screen.findByRole('textbox', { name: 'Editor do capítulo' })).toHaveTextContent('Seção 1.1')
   })
 
   it('mostra mensagem útil quando a criação de tabela/quadro retorna 404', async () => {
@@ -748,7 +1049,7 @@ describe('editor page', () => {
       { path: '/editor/:projectId/:nodeId', element: <EditorPage /> },
     ], ['/editor/project-1/chapter-1'])
 
-    expect(await screen.findByRole('heading', { name: 'Introdução' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
 
     const editor = screen.getByRole('textbox', { name: 'Editor do capítulo' })
     await user.click(editor)
@@ -779,7 +1080,7 @@ describe('editor page', () => {
       { path: '/editor/:projectId/:nodeId', element: <EditorPage /> },
     ], ['/editor/project-1/chapter-1'])
 
-    expect(await screen.findByRole('heading', { name: 'Introdução' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
 
     const editor = screen.getByRole('textbox', { name: 'Editor do capítulo' })
     await user.click(editor)
@@ -811,7 +1112,7 @@ describe('editor page', () => {
       ['/editor/project-1/chapter-3'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Metodologia' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /metodologia/i })).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByRole('textbox', { name: 'Editor do capítulo' }).textContent).toContain('(Citação não encontrada)')
     })
@@ -825,7 +1126,7 @@ describe('editor page', () => {
       ['/editor/project-1/chapter-3'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Metodologia' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /metodologia/i })).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByRole('textbox', { name: 'Editor do capítulo' }).textContent).toContain('Figura indisponível')
     })
@@ -839,7 +1140,7 @@ describe('editor page', () => {
       ['/editor/project-1/chapter-3'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Metodologia' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /metodologia/i })).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByRole('textbox', { name: 'Editor do capítulo' }).textContent).toContain('Tabela removida ou inválida')
     })
@@ -853,9 +1154,39 @@ describe('editor page', () => {
       ['/editor/project-1/chapter-3'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Metodologia' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /metodologia/i })).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByRole('textbox', { name: 'Editor do capítulo' }).textContent).toContain('Quadro removido ou inválido')
+    })
+  })
+
+  it('mostra fallback quando a referência cruzada não é encontrada', async () => {
+    await updateChapterContent('chapter-3', 'Texto com marcador órfão [[@XREF:FIG:missing-figure]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-3'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /metodologia/i })).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Editor do capítulo' }).textContent).toContain('referência inválida')
+    })
+  })
+
+  it('mostra fallback quando a referência cruzada de capítulo não é encontrada', async () => {
+    await updateChapterContent('chapter-3', 'Texto com marcador órfão [[@XREF:CHAPTER:missing-chapter]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-3'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /metodologia/i })).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Editor do capítulo' }).textContent).toContain('referência inválida')
     })
   })
 
@@ -921,7 +1252,7 @@ describe('editor page', () => {
       ['/editor/project-1/tables'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Lista de tabelas' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /lista de tabelas/i })).toBeInTheDocument()
     expect(screen.getByText('Tabela 1 – Resultados por grupo')).toBeInTheDocument()
     expect(screen.getByText('Tabela 2 – Distribuição de estudos por período')).toBeInTheDocument()
 
@@ -932,7 +1263,7 @@ describe('editor page', () => {
       ['/editor/project-1/quadros'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Lista de quadros' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /lista de quadros/i })).toBeInTheDocument()
     expect(screen.getByText('Quadro 1 – Categorias de análise')).toBeInTheDocument()
     expect(screen.getByText('Quadro 2 – Síntese dos critérios de análise')).toBeInTheDocument()
   })
@@ -968,7 +1299,7 @@ describe('editor page', () => {
       ['/editor/project-1/tables'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Lista de tabelas' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /lista de tabelas/i })).toBeInTheDocument()
     expect(screen.getByText('Tabela 1 – Distribuição de estudos por período')).toBeInTheDocument()
     expect(screen.queryByText('Tabela não citada')).not.toBeInTheDocument()
 
@@ -979,7 +1310,7 @@ describe('editor page', () => {
       ['/editor/project-1/quadros'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Lista de quadros' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /lista de quadros/i })).toBeInTheDocument()
     expect(screen.getByText('Quadro 1 – Síntese dos critérios de análise')).toBeInTheDocument()
     expect(screen.queryByText('Quadro não citado')).not.toBeInTheDocument()
   })
@@ -1058,6 +1389,46 @@ describe('editor page', () => {
     })
   })
 
+  it('serializa a referência cruzada de volta para o marcador bruto e mantém o reload correto', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@FIG:figure-1]] e [[@XREF:FIG:figure-1]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    expect(editor.textContent).toContain('Figura 1')
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain('[[@XREF:FIG:figure-1]]')
+    })
+  })
+
+  it('serializa a referência cruzada de capítulo de volta para o marcador bruto e mantém o reload correto', async () => {
+    const user = userEvent.setup()
+    await updateChapterContent('chapter-1', 'Texto com [[@XREF:CHAPTER:chapter-2]].')
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const editor = await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    expect(editor.textContent).toContain('Capítulo 2')
+
+    await user.click(screen.getByRole('button', { name: 'Salvar' }))
+
+    await waitFor(async () => {
+      const updatedChapter = await getChapter('chapter-1')
+      expect(updatedChapter?.content).toContain('[[@XREF:CHAPTER:chapter-2]]')
+    })
+  })
+
   it('serializa figura preservando o texto depois do bloco', async () => {
     const user = userEvent.setup()
     await updateChapterContent('chapter-1', 'Texto antes\n\n[[@FIG:figure-1]]\n\nTexto depois.')
@@ -1108,7 +1479,7 @@ describe('editor page', () => {
       ['/editor/project-1/references'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Referências' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /referências/i })).toBeInTheDocument()
     expect(screen.getByText(/nenhuma referência citada no texto ainda/i)).toBeInTheDocument()
     expect(screen.queryByText(/Artificial Intelligence: A Modern Approach/i)).not.toBeInTheDocument()
   })
@@ -1121,7 +1492,7 @@ describe('editor page', () => {
       ['/editor/project-1/references'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Referências' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /referências/i })).toBeInTheDocument()
     expect(screen.getByText(/Artificial Intelligence: A Modern Approach/i)).toBeInTheDocument()
     expect(screen.queryByText(/The relative effectiveness of human tutoring/i)).not.toBeInTheDocument()
   })
@@ -1134,7 +1505,7 @@ describe('editor page', () => {
       ['/editor/project-1/figures'],
     )
 
-    expect(await screen.findByRole('heading', { name: 'Lista de figuras' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /lista de figuras/i })).toBeInTheDocument()
     expect(screen.getByText(/Figura 1 – Arquitetura geral do sistema de tutoria inteligente/i)).toBeInTheDocument()
   })
 

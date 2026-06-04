@@ -49,6 +49,17 @@ public class Chapter {
     @Column(nullable = false)
     private Integer targetWordCount;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_id")
+    private Chapter parent;
+
+    @Column(name = "section_order")
+    private Integer sectionOrder;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer level = 1;
+
     private LocalDateTime lastEditedAt;
 
     @CreationTimestamp

@@ -27,6 +27,7 @@ import { referencesQuery } from '@/features/references/services/references.servi
 import { clearActiveProjectId, resolveValidActiveProjectId, setActiveProjectId } from '@/shared/services/active-project.service'
 import { createCitation, deleteCitation } from '@/shared/services/citation.service'
 import { createFigure, deleteFigure, getFigureImage } from '@/shared/services/figure.service'
+import { createSection, deleteSection, updateSection } from '@/shared/services/chapter.service'
 import { createReference } from '@/shared/services/reference.service'
 import { createTabularElement, deleteTabularElement } from '@/shared/services/table.service'
 import { projectsQuery } from '@/features/projects/services/projects.service'
@@ -82,7 +83,7 @@ const chapterTargets = {
 } as const
 
 type DocumentStatus = 'completed' | 'writing' | 'pending'
-type ProjectNodeId = 'abstractPt' | 'abstractEn' | 'references' | 'figures' | 'tables' | 'quadros'
+type ProjectNodeId = 'cover' | 'titlePage' | 'abstractPt' | 'toc' | 'abstractEn' | 'references' | 'figures' | 'tables' | 'quadros'
 type EditorNodeId = ProjectNodeId | `chapter:${string}`
 type CitationFormState = {
   referenceId: string
@@ -97,6 +98,7 @@ type ChapterEditorHandle = {
   focusAtEnd: () => void
   focusAtOffset: (offset: number) => void
   insertCitation: (citationId: string, citation?: Citation) => string
+  insertCrossReference: (kind: CrossReferenceKind, targetId: string, reference?: CrossReferenceRenderItem) => string
   insertFigure: (figureId: string, figure?: Figure) => { value: string; caretOffset: number }
   insertTabularElement: (itemId: string, kind: TabularElementKind, item?: TabularElement) => { value: string; caretOffset: number }
 }
@@ -125,11 +127,27 @@ type QuickReferenceFormState = {
   source: string
   url: string
 }
+type CrossReferenceKind = 'FIG' | 'TABLE' | 'QUADRO' | 'CHAPTER' | 'SECTION'
+type CrossReferenceFormState = {
+  kind: CrossReferenceKind
+  targetId: string
+}
+type CrossReferenceRenderItem = {
+  id: string
+  kind: CrossReferenceKind
+  label: string
+  tooltip: string
+}
+type SectionFormState = {
+  title: string
+  sectionOrder: string
+}
 
 const CITE_MARKER_REGEX = /\[\[@CITE:([^\]]+)\]\]/g
 const FIG_MARKER_REGEX = /\[\[@FIG:([^\]]+)\]\]/g
 const TABLE_MARKER_REGEX = /\[\[@TABLE:([^\]]+)\]\]/g
 const QUADRO_MARKER_REGEX = /\[\[@QUADRO:([^\]]+)\]\]/g
+const XREF_MARKER_REGEX = /\[\[@XREF:(FIG|TABLE|QUADRO|CHAPTER|SECTION):([^\]]+)\]\]/g
 const defaultCitationFormState: CitationFormState = {
   referenceId: '',
   type: 'indirect',
@@ -170,6 +188,14 @@ const quickReferenceDefaultFormState: QuickReferenceFormState = {
   source: '',
   url: '',
 }
+const defaultCrossReferenceFormState: CrossReferenceFormState = {
+  kind: 'FIG',
+  targetId: '',
+}
+const defaultSectionFormState: SectionFormState = {
+  title: '',
+  sectionOrder: '',
+}
 
 function isChapterNode(nodeId: EditorNodeId) {
   return nodeId.startsWith('chapter:')
@@ -180,7 +206,10 @@ function getChapterIdFromNode(nodeId: EditorNodeId) {
 }
 
 function getRouteNodeFromEditorNode(nodeId: EditorNodeId): string {
+  if (nodeId === 'cover') return 'cover'
+  if (nodeId === 'titlePage') return 'title-page'
   if (nodeId === 'abstractPt') return 'summary'
+  if (nodeId === 'toc') return 'toc'
   if (nodeId === 'abstractEn') return 'abstract'
   if (nodeId === 'references') return 'references'
   if (nodeId === 'figures') return 'figures'
@@ -194,7 +223,10 @@ function getEditorNodeFromRouteNode(
   availableChapterIds: string[],
 ): EditorNodeId | null {
   if (!routeNode) return null
+  if (routeNode === 'cover') return 'cover'
+  if (routeNode === 'title-page') return 'titlePage'
   if (routeNode === 'summary') return 'abstractPt'
+  if (routeNode === 'toc') return 'toc'
   if (routeNode === 'abstract') return 'abstractEn'
   if (routeNode === 'references') return 'references'
   if (routeNode === 'figures') return 'figures'
@@ -222,6 +254,10 @@ function buildQuadroMarker(itemId: string) {
 
 function buildTabularMarker(kind: TabularElementKind, itemId: string) {
   return kind === 'table' ? buildTableMarker(itemId) : buildQuadroMarker(itemId)
+}
+
+function buildCrossReferenceMarker(kind: CrossReferenceKind, targetId: string) {
+  return `[[@XREF:${kind}:${targetId}]]`
 }
 
 function escapeRegExp(value: string) {
@@ -302,6 +338,30 @@ function buildFigurePreviewLabel(figure?: Figure) {
 function buildTabularElementPreviewLabel(item?: TabularElement) {
   if (!item) return 'Elemento inválido ou removido'
   return `${item.kind === 'table' ? 'Tabela' : 'Quadro'} – ${item.title}`
+}
+
+function getCrossReferenceNoun(kind: CrossReferenceKind) {
+  if (kind === 'FIG') return 'Figura'
+  if (kind === 'TABLE') return 'Tabela'
+  if (kind === 'CHAPTER') return 'Capítulo'
+  if (kind === 'SECTION') return 'Seção'
+  return 'Quadro'
+}
+
+function getCrossReferenceInvalidLabel() {
+  return 'referência inválida'
+}
+
+function getCrossReferenceLabel(reference?: CrossReferenceRenderItem) {
+  return reference?.label ?? getCrossReferenceInvalidLabel()
+}
+
+function getCrossReferenceTooltip(kind: CrossReferenceKind, targetId: string, reference?: CrossReferenceRenderItem) {
+  if (!reference) {
+    return `Marcador ${buildCrossReferenceMarker(kind, targetId)} não encontrado na lista de elementos do projeto.`
+  }
+
+  return reference.tooltip
 }
 
 function getInvalidTabularFallbackLabel(kind: TabularElementKind) {
@@ -404,6 +464,13 @@ export function extractTableIds(content: string) {
 
 export function extractQuadroIds(content: string) {
   return Array.from(content.matchAll(QUADRO_MARKER_REGEX), (match) => match[1])
+}
+
+export function extractCrossReferenceTargets(content: string) {
+  return Array.from(content.matchAll(XREF_MARKER_REGEX), (match) => ({
+    kind: match[1] as CrossReferenceKind,
+    targetId: match[2],
+  }))
 }
 
 function getCitationChipLabel(citation?: Citation) {
@@ -509,6 +576,21 @@ function createCitationChipNode(doc: Document, citationId: string, citation?: Ci
   return chip
 }
 
+function createCrossReferenceNode(doc: Document, kind: CrossReferenceKind, targetId: string, reference?: CrossReferenceRenderItem) {
+  const chip = doc.createElement('span')
+  chip.dataset.xrefKind = kind
+  chip.dataset.xrefTargetId = targetId
+  chip.contentEditable = 'false'
+  chip.className = reference
+    ? 'inline rounded-sm border-b border-dotted border-primary/30 px-0.5 text-[0.98em] leading-[inherit] text-foreground align-baseline'
+    : 'inline rounded-sm border-b border-dotted border-amber-400/70 px-0.5 text-[0.98em] leading-[inherit] text-amber-800 align-baseline'
+  chip.textContent = getCrossReferenceLabel(reference)
+  chip.title = getCrossReferenceTooltip(kind, targetId, reference)
+  chip.setAttribute('aria-label', getCrossReferenceTooltip(kind, targetId, reference))
+  chip.setAttribute('tabindex', '0')
+  return chip
+}
+
 function createFigureChipNode(doc: Document, figureId: string, figure?: Figure, figureNumber?: number) {
   const wrapper = doc.createElement('figure')
   wrapper.dataset.figureId = figureId
@@ -600,20 +682,21 @@ function createTabularElementNode(
   return wrapper
 }
 
-const INLINE_MARKER_REGEX = /\[\[@(CITE|FIG|TABLE|QUADRO):([^\]]+)\]\]/g
+const INLINE_MARKER_REGEX = /\[\[@(CITE|FIG|TABLE|QUADRO):([^\]]+)\]\]|\[\[@XREF:(FIG|TABLE|QUADRO|CHAPTER|SECTION):([^\]]+)\]\]/g
 function appendContentWithInlineMarkers(
   root: HTMLElement,
   content: string,
   citationsMap: Map<string, Citation>,
   figuresMap: Map<string, Figure>,
   tabularElementsMap: Map<string, TabularElement>,
+  crossReferencesMap: Map<string, CrossReferenceRenderItem>,
 ) {
   let lastIndex = 0
   let figureNumber = 0
   let tableNumber = 0
   let quadroNumber = 0
 
-  content.replace(INLINE_MARKER_REGEX, (match, markerType: string, markerId: string, offset: number) => {
+  content.replace(INLINE_MARKER_REGEX, (match, markerType: string, markerId: string, xrefKind: string, xrefTargetId: string, offset: number) => {
     if (offset > lastIndex) {
       root.append(document.createTextNode(content.slice(lastIndex, offset)))
     }
@@ -626,9 +709,11 @@ function appendContentWithInlineMarkers(
     } else if (markerType === 'TABLE') {
       tableNumber += 1
       root.append(createTabularElementNode(root.ownerDocument, markerId, tabularElementsMap.get(markerId), tableNumber, 'table'))
-    } else {
+    } else if (markerType === 'QUADRO') {
       quadroNumber += 1
       root.append(createTabularElementNode(root.ownerDocument, markerId, tabularElementsMap.get(markerId), quadroNumber, 'quadro'))
+    } else if (xrefKind && xrefTargetId) {
+      root.append(createCrossReferenceNode(root.ownerDocument, xrefKind as CrossReferenceKind, xrefTargetId, crossReferencesMap.get(`${xrefKind}:${xrefTargetId}`)))
     }
 
     lastIndex = offset + match.length
@@ -646,9 +731,10 @@ function renderContentEditableValue(
   citationsMap: Map<string, Citation>,
   figuresMap: Map<string, Figure>,
   tabularElementsMap: Map<string, TabularElement>,
+  crossReferencesMap: Map<string, CrossReferenceRenderItem>,
 ) {
   root.replaceChildren()
-  appendContentWithInlineMarkers(root, content, citationsMap, figuresMap, tabularElementsMap)
+  appendContentWithInlineMarkers(root, content, citationsMap, figuresMap, tabularElementsMap, crossReferencesMap)
 }
 
 function serializeEditorNode(node: Node): string {
@@ -674,6 +760,10 @@ function serializeEditorNode(node: Node): string {
 
   if (node.dataset.quadroId) {
     return buildQuadroMarker(node.dataset.quadroId)
+  }
+
+  if (node.dataset.xrefKind && node.dataset.xrefTargetId) {
+    return buildCrossReferenceMarker(node.dataset.xrefKind as CrossReferenceKind, node.dataset.xrefTargetId)
   }
 
   if (node.tagName === 'BR') {
@@ -709,7 +799,7 @@ function getSerializedOffset(root: HTMLElement, container: Node, offset: number)
       if (node.nodeType === Node.TEXT_NODE) {
         serializedOffset += offset
       } else if (node instanceof HTMLElement) {
-        if (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId) {
+        if (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId || (node.dataset.xrefKind && node.dataset.xrefTargetId)) {
           serializedOffset += offset > 0 ? getSerializedNodeLength(node) : 0
         } else if (node.tagName === 'BR') {
           serializedOffset += Math.min(offset, 1)
@@ -733,7 +823,7 @@ function getSerializedOffset(root: HTMLElement, container: Node, offset: number)
       return false
     }
 
-    if (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId) {
+    if (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId || (node.dataset.xrefKind && node.dataset.xrefTargetId)) {
       serializedOffset += getSerializedNodeLength(node)
       return false
     }
@@ -800,7 +890,7 @@ function placeCaretAtSerializedOffset(root: HTMLElement, targetOffset: number) {
       return
     }
 
-    if (node instanceof HTMLElement && (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId)) {
+    if (node instanceof HTMLElement && (node.dataset.citationId || node.dataset.figureId || node.dataset.tableId || node.dataset.quadroId || (node.dataset.xrefKind && node.dataset.xrefTargetId))) {
       if (remainingOffset === 0) {
         range.setStartBefore(node)
       } else {
@@ -885,6 +975,20 @@ function normalizeChapterStatus(chapter: Chapter): DocumentStatus {
   return 'pending'
 }
 
+function getChapterDisplayNumber(chapter: Chapter, chapters: Chapter[]) {
+  if ((chapter.level ?? 1) === 2) {
+    const parent = chapters.find((candidate) => candidate.id === chapter.parentId)
+    if (!parent) return `.${chapter.sectionOrder ?? chapter.order}`
+    return `${parent.order}.${chapter.sectionOrder ?? chapter.order}`
+  }
+
+  return `${chapter.order}`
+}
+
+function getChapterDisplayLabel(chapter: Chapter, chapters: Chapter[]) {
+  return `${getChapterDisplayNumber(chapter, chapters)} ${chapter.title}`
+}
+
 function getChapterTargetWords(chapter: Chapter | null) {
   if (!chapter) return 500
 
@@ -926,17 +1030,20 @@ function getStatusTone(status: DocumentStatus) {
   }
 }
 
-function getDocumentKindLabel(nodeId: EditorNodeId, isChapterView: boolean) {
+function getDocumentKindLabel(nodeId: EditorNodeId, isChapterView: boolean, chapter?: Chapter | null) {
+  if (nodeId === 'cover') return 'Pré-textual institucional'
+  if (nodeId === 'titlePage') return 'Pré-textual institucional'
   if (nodeId === 'abstractPt') return 'Síntese pré-textual'
+  if (nodeId === 'toc') return 'Sumário automático'
   if (nodeId === 'abstractEn') return 'Versão internacional'
   if (nodeId === 'references') return 'Apoio bibliográfico'
   if (nodeId === 'figures') return 'Pós-textual visual'
-  if (isChapterView) return 'Capítulo textual'
+  if (isChapterView) return chapter?.level === 2 ? 'Seção textual' : 'Capítulo textual'
   return 'Documento'
 }
 
-function getDocumentSummaryLabel(nodeId: EditorNodeId, selectedStatus: DocumentStatus, isChapterView: boolean) {
-  const kindLabel = getDocumentKindLabel(nodeId, isChapterView)
+function getDocumentSummaryLabel(nodeId: EditorNodeId, selectedStatus: DocumentStatus, isChapterView: boolean, chapter?: Chapter | null) {
+  const kindLabel = getDocumentKindLabel(nodeId, isChapterView, chapter)
   return `${kindLabel} • ${getStatusLabel(selectedStatus)}`
 }
 
@@ -1134,6 +1241,9 @@ export function EditorPage() {
   const [citationForm, setCitationForm] = useState<CitationFormState>(defaultCitationFormState)
   const [citationFeedback, setCitationFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
   const [citationSaving, setCitationSaving] = useState(false)
+  const [crossReferenceDialogOpen, setCrossReferenceDialogOpen] = useState(false)
+  const [crossReferenceForm, setCrossReferenceForm] = useState<CrossReferenceFormState>(defaultCrossReferenceFormState)
+  const [crossReferenceFeedback, setCrossReferenceFeedback] = useState<string | null>(null)
   const [figureDialogOpen, setFigureDialogOpen] = useState(false)
   const [figureForm, setFigureForm] = useState<FigureFormState>(defaultFigureFormState)
   const [figureFeedback, setFigureFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
@@ -1149,6 +1259,12 @@ export function EditorPage() {
   const [quickReferenceForm, setQuickReferenceForm] = useState<QuickReferenceFormState>(quickReferenceDefaultFormState)
   const [quickReferenceSaving, setQuickReferenceSaving] = useState(false)
   const [quickReferenceFeedback, setQuickReferenceFeedback] = useState<string | null>(null)
+  const [sectionDialogOpen, setSectionDialogOpen] = useState(false)
+  const [sectionForm, setSectionForm] = useState<SectionFormState>(defaultSectionFormState)
+  const [sectionSaving, setSectionSaving] = useState(false)
+  const [sectionFeedback, setSectionFeedback] = useState<string | null>(null)
+  const [sectionTitleDraft, setSectionTitleDraft] = useState('')
+  const [sectionTitleSaving, setSectionTitleSaving] = useState(false)
   const [deletingCitationId, setDeletingCitationId] = useState<string | null>(null)
   const [deletingFigureId, setDeletingFigureId] = useState<string | null>(null)
   const [deletingTabularElementId, setDeletingTabularElementId] = useState<string | null>(null)
@@ -1162,9 +1278,22 @@ export function EditorPage() {
     () => chapters.filter((chapter) => chapter.type !== 'references'),
     [chapters],
   )
-  const textualChapterIds = useMemo(
-    () => textualChapters.map((chapter) => chapter.id),
+  const topLevelChapters = useMemo(
+    () => textualChapters.filter((chapter) => (chapter.level ?? 1) === 1).sort((left, right) => left.order - right.order),
     [textualChapters],
+  )
+  const chapterHierarchy = useMemo(
+    () => topLevelChapters.map((chapter) => ({
+      chapter,
+      sections: textualChapters
+        .filter((candidate) => (candidate.level ?? 1) === 2 && candidate.parentId === chapter.id)
+        .sort((left, right) => (left.sectionOrder ?? left.order) - (right.sectionOrder ?? right.order)),
+    })),
+    [textualChapters, topLevelChapters],
+  )
+  const textualChapterIds = useMemo(
+    () => chapterHierarchy.flatMap((entry) => [entry.chapter.id, ...entry.sections.map((section) => section.id)]),
+    [chapterHierarchy],
   )
   const selectedChapterId = selectedNodeId ? getChapterIdFromNode(selectedNodeId) : null
   const selectedChapterQuery = useQuery(chapterQuery(selectedChapterId))
@@ -1174,8 +1303,8 @@ export function EditorPage() {
   const previousProjectIdRef = useRef<string | null>(null)
 
   const selectedChapter = useMemo(
-    () => selectedChapterQuery.data ?? textualChapters.find((chapter) => chapter.id === selectedChapterId) ?? textualChapters[0] ?? null,
-    [selectedChapterId, selectedChapterQuery.data, textualChapters],
+    () => selectedChapterQuery.data ?? textualChapters.find((chapter) => chapter.id === selectedChapterId) ?? topLevelChapters[0] ?? textualChapters[0] ?? null,
+    [selectedChapterId, selectedChapterQuery.data, textualChapters, topLevelChapters],
   )
   const chapterCitations = chapterCitationsListQuery.data ?? []
   const projectCitations = projectCitationsListQuery.data ?? []
@@ -1298,6 +1427,16 @@ export function EditorPage() {
     () => new Set(projectChapterContents.flatMap((chapter) => extractQuadroIds(chapter.content ?? ''))),
     [projectChapterContents],
   )
+  const projectSectionXrefIdsInText = useMemo(
+    () => new Set(
+      projectChapterContents.flatMap((chapter) => (
+        extractCrossReferenceTargets(chapter.content ?? '')
+          .filter((target) => target.kind === 'SECTION')
+          .map((target) => target.targetId)
+      )),
+    ),
+    [projectChapterContents],
+  )
   const chapterCitationsInText = useMemo(
     () => chapterCitations.filter((citation) => chapterCitationIdsInText.has(citation.id)),
     [chapterCitationIdsInText, chapterCitations],
@@ -1392,6 +1531,209 @@ export function EditorPage() {
       return ordered
     },
     [projectChapterContents, tabularElementsMap],
+  )
+  const figureNumberMap = useMemo(
+    () => new Map(figuresInReadingOrder.map((figure, index) => [figure.id, index + 1])),
+    [figuresInReadingOrder],
+  )
+  const tableNumberMap = useMemo(
+    () => new Map(tablesInReadingOrder.map((item, index) => [item.id, index + 1])),
+    [tablesInReadingOrder],
+  )
+  const quadroNumberMap = useMemo(
+    () => new Map(quadrosInReadingOrder.map((item, index) => [item.id, index + 1])),
+    [quadrosInReadingOrder],
+  )
+  const chapterNumberMap = useMemo(
+    () => new Map(topLevelChapters.map((chapter, index) => [chapter.id, index + 1])),
+    [topLevelChapters],
+  )
+  const crossReferencesMap = useMemo(
+    () => {
+      const map = new Map<string, CrossReferenceRenderItem>()
+
+      figuresInReadingOrder.forEach((figure, index) => {
+        map.set(`FIG:${figure.id}`, {
+          id: figure.id,
+          kind: 'FIG',
+          label: `Figura ${index + 1}`,
+          tooltip: `Figura ${index + 1} • ${figure.caption}${figure.sourceText ? ` • ${figure.sourceText}` : ''}`,
+        })
+      })
+
+      tablesInReadingOrder.forEach((item, index) => {
+        map.set(`TABLE:${item.id}`, {
+          id: item.id,
+          kind: 'TABLE',
+          label: `Tabela ${index + 1}`,
+          tooltip: `Tabela ${index + 1} • ${item.title}${item.sourceText ? ` • ${item.sourceText}` : ''}`,
+        })
+      })
+
+      quadrosInReadingOrder.forEach((item, index) => {
+        map.set(`QUADRO:${item.id}`, {
+          id: item.id,
+          kind: 'QUADRO',
+          label: `Quadro ${index + 1}`,
+          tooltip: `Quadro ${index + 1} • ${item.title}${item.sourceText ? ` • ${item.sourceText}` : ''}`,
+        })
+      })
+
+      topLevelChapters.forEach((chapter, index) => {
+        map.set(`CHAPTER:${chapter.id}`, {
+          id: chapter.id,
+          kind: 'CHAPTER',
+          label: `Capítulo ${index + 1}`,
+          tooltip: `Capítulo ${index + 1} • ${chapter.title}`,
+        })
+      })
+
+      chapterHierarchy.flatMap((entry) => entry.sections).forEach((section) => {
+        const sectionNumber = getChapterDisplayNumber(section, textualChapters)
+        map.set(`SECTION:${section.id}`, {
+          id: section.id,
+          kind: 'SECTION',
+          label: `Seção ${sectionNumber}`,
+          tooltip: `Seção ${sectionNumber} • ${section.title}`,
+        })
+      })
+
+      projectFigures
+        .filter((figure) => !figureNumberMap.has(figure.id))
+        .forEach((figure) => {
+          map.set(`FIG:${figure.id}`, {
+            id: figure.id,
+            kind: 'FIG',
+            label: 'Figura não usada',
+            tooltip: `Figura não usada no texto • ${figure.caption}${figure.sourceText ? ` • ${figure.sourceText}` : ''}`,
+          })
+        })
+
+      projectTabularElements
+        .filter((item) => item.kind === 'table' && !tableNumberMap.has(item.id))
+        .forEach((item) => {
+          map.set(`TABLE:${item.id}`, {
+            id: item.id,
+            kind: 'TABLE',
+            label: 'Tabela não usada',
+            tooltip: `Tabela não usada no texto • ${item.title}${item.sourceText ? ` • ${item.sourceText}` : ''}`,
+          })
+        })
+
+      projectTabularElements
+        .filter((item) => item.kind === 'quadro' && !quadroNumberMap.has(item.id))
+        .forEach((item) => {
+          map.set(`QUADRO:${item.id}`, {
+            id: item.id,
+            kind: 'QUADRO',
+            label: 'Quadro não usado',
+            tooltip: `Quadro não usado no texto • ${item.title}${item.sourceText ? ` • ${item.sourceText}` : ''}`,
+          })
+        })
+
+      return map
+    },
+    [chapterHierarchy, figureNumberMap, figuresInReadingOrder, projectFigures, projectSectionXrefIdsInText, projectTabularElements, quadroNumberMap, quadrosInReadingOrder, tableNumberMap, tablesInReadingOrder, textualChapters, topLevelChapters],
+  )
+  const crossReferenceOptions = useMemo(
+    () => {
+      const usedFigures = figuresInReadingOrder.map((figure) => ({
+        id: figure.id,
+        kind: 'FIG' as const,
+        label: `Figura ${figureNumberMap.get(figure.id) ?? 1}`,
+        description: figure.caption,
+        used: true,
+      }))
+      const unusedFigures = projectFigures
+        .filter((figure) => !figureNumberMap.has(figure.id))
+        .map((figure) => ({
+          id: figure.id,
+          kind: 'FIG' as const,
+          label: 'Figura não usada',
+          description: figure.caption,
+          used: false,
+        }))
+      const usedTables = tablesInReadingOrder.map((item) => ({
+        id: item.id,
+        kind: 'TABLE' as const,
+        label: `Tabela ${tableNumberMap.get(item.id) ?? 1}`,
+        description: item.title,
+        used: true,
+      }))
+      const unusedTables = projectTabularElements
+        .filter((item) => item.kind === 'table' && !tableNumberMap.has(item.id))
+        .map((item) => ({
+          id: item.id,
+          kind: 'TABLE' as const,
+          label: 'Tabela não usada',
+          description: item.title,
+          used: false,
+        }))
+      const usedQuadros = quadrosInReadingOrder.map((item) => ({
+        id: item.id,
+        kind: 'QUADRO' as const,
+        label: `Quadro ${quadroNumberMap.get(item.id) ?? 1}`,
+        description: item.title,
+        used: true,
+      }))
+      const unusedQuadros = projectTabularElements
+        .filter((item) => item.kind === 'quadro' && !quadroNumberMap.has(item.id))
+        .map((item) => ({
+          id: item.id,
+          kind: 'QUADRO' as const,
+          label: 'Quadro não usado',
+          description: item.title,
+          used: false,
+        }))
+      const usedSections = chapterHierarchy
+        .flatMap((entry) => entry.sections)
+        .filter((section) => projectSectionXrefIdsInText.has(section.id))
+        .map((section) => ({
+          id: section.id,
+          kind: 'SECTION' as const,
+          label: `Seção ${getChapterDisplayNumber(section, textualChapters)}`,
+          description: section.title,
+          used: true,
+        }))
+      const unusedSections = chapterHierarchy
+        .flatMap((entry) => entry.sections)
+        .filter((section) => !projectSectionXrefIdsInText.has(section.id))
+        .map((section) => ({
+          id: section.id,
+          kind: 'SECTION' as const,
+          label: 'Seção não usada',
+          description: section.title,
+          used: false,
+        }))
+      const chapters = topLevelChapters.map((chapter) => ({
+        id: chapter.id,
+        kind: 'CHAPTER' as const,
+        label: `Capítulo ${chapterNumberMap.get(chapter.id) ?? 1}`,
+        description: chapter.title,
+        used: true,
+      }))
+
+      return {
+        FIG: [...usedFigures, ...unusedFigures],
+        TABLE: [...usedTables, ...unusedTables],
+        QUADRO: [...usedQuadros, ...unusedQuadros],
+        CHAPTER: chapters,
+        SECTION: [...usedSections, ...unusedSections],
+      }
+    },
+    [chapterHierarchy, chapterNumberMap, figureNumberMap, figuresInReadingOrder, projectFigures, projectSectionXrefIdsInText, projectTabularElements, quadroNumberMap, quadrosInReadingOrder, tableNumberMap, tablesInReadingOrder, textualChapters, topLevelChapters],
+  )
+  const currentCrossReferenceOptions = useMemo(
+    () => crossReferenceOptions[crossReferenceForm.kind],
+    [crossReferenceForm.kind, crossReferenceOptions],
+  )
+  const currentCrossReferencePreview = useMemo(
+    () => (
+      crossReferenceForm.targetId
+        ? crossReferencesMap.get(`${crossReferenceForm.kind}:${crossReferenceForm.targetId}`)
+        : undefined
+    ),
+    [crossReferenceForm.kind, crossReferenceForm.targetId, crossReferencesMap],
   )
   const currentTabularValidation = useMemo(
     () => validateTabularElementForm(tabularElementForm.rows),
@@ -1492,7 +1834,7 @@ export function EditorPage() {
   useEffect(() => {
     if (!textualChapters.length) return
 
-    const fallbackNodeId: EditorNodeId = `chapter:${textualChapters[0].id}`
+    const fallbackNodeId: EditorNodeId = `chapter:${topLevelChapters[0].id}`
     const projectChanged = previousProjectIdRef.current !== projectId
     const routeNode = getEditorNodeFromRouteNode(routeNodeId, textualChapterIds)
 
@@ -1521,7 +1863,7 @@ export function EditorPage() {
     }
 
     if (isChapterNode(selectedNodeId)) {
-      const currentChapterId = getChapterIdFromNode(selectedNodeId)
+    const currentChapterId = getChapterIdFromNode(selectedNodeId)
       const chapterStillExists = textualChapterIds.includes(currentChapterId ?? '')
 
       if (!chapterStillExists) {
@@ -1530,7 +1872,7 @@ export function EditorPage() {
     }
 
     previousProjectIdRef.current = projectId
-  }, [navigate, projectId, routeNodeId, selectedNodeId, textualChapterIds, textualChapters])
+  }, [navigate, projectId, routeNodeId, selectedNodeId, textualChapterIds, textualChapters, topLevelChapters])
 
   useEffect(() => {
     if (selectedChapter && hydratedChapterIdRef.current !== selectedChapter.id) {
@@ -1547,6 +1889,11 @@ export function EditorPage() {
       setTabularElementDialogOpen(false)
       setTabularValidationState({ valid: true, invalidCells: [] })
       setQuickReferenceDialogOpen(false)
+      setSectionDialogOpen(false)
+      setSectionFeedback(null)
+      setSectionSaving(false)
+      setSectionTitleDraft(selectedChapter.title)
+      setSectionTitleSaving(false)
     }
   }, [selectedChapter])
 
@@ -1662,7 +2009,7 @@ export function EditorPage() {
   }
 
   const project = projectQuery.data.project
-  const activeNodeId = selectedNodeId ?? `chapter:${textualChapters[0].id}`
+    const activeNodeId = selectedNodeId ?? `chapter:${topLevelChapters[0].id}`
   const isChapterView = isChapterNode(activeNodeId)
   const abstractPtWords = countWords(abstractPtDraft)
   const abstractEnWords = countWords(abstractEnDraft)
@@ -1685,6 +2032,9 @@ export function EditorPage() {
 
   const abstractPtStatus = normalizeTextStatus(abstractPtWords, 150)
   const abstractEnStatus = normalizeTextStatus(abstractEnWords, 100)
+  const summaryStatus: DocumentStatus = topLevelChapters.length > 0 ? 'completed' : 'pending'
+  const coverStatus: DocumentStatus = 'completed'
+  const titlePageStatus: DocumentStatus = 'completed'
   const referencesStatus: DocumentStatus = citedReferences.length > 0 ? 'completed' : 'pending'
   const figuresStatus: DocumentStatus = figuresInReadingOrder.length > 0 ? 'completed' : 'pending'
   const tablesStatus: DocumentStatus = tablesInReadingOrder.length > 0 ? 'completed' : 'pending'
@@ -1692,44 +2042,65 @@ export function EditorPage() {
   const textualStatuses = textualChapters.map((chapter) => normalizeChapterStatus(chapter))
 
   const groupCounters = {
-    pre: [abstractPtStatus, abstractEnStatus],
+    pre: [coverStatus, titlePageStatus, abstractPtStatus, summaryStatus, abstractEnStatus],
     text: textualStatuses,
     post: [figuresStatus, tablesStatus, quadrosStatus, referencesStatus],
   }
 
-  const selectedGroup = activeNodeId === 'abstractPt' || activeNodeId === 'abstractEn'
+  const selectedGroup = activeNodeId === 'abstractPt'
+    || activeNodeId === 'abstractEn'
+    || activeNodeId === 'cover'
+    || activeNodeId === 'titlePage'
+    || activeNodeId === 'toc'
     ? 'Pré-textuais'
     : activeNodeId === 'references' || activeNodeId === 'figures' || activeNodeId === 'tables' || activeNodeId === 'quadros'
       ? 'Pós-textuais'
       : 'Textuais'
-  const selectedLabel = activeNodeId === 'abstractPt'
+  const selectedLabel = activeNodeId === 'cover'
+    ? 'Capa'
+    : activeNodeId === 'titlePage'
+      ? 'Folha de rosto'
+      : activeNodeId === 'abstractPt'
     ? 'Resumo'
-    : activeNodeId === 'abstractEn'
+      : activeNodeId === 'toc'
+        ? 'Sumário'
+        : activeNodeId === 'abstractEn'
       ? 'Abstract'
-      : activeNodeId === 'references'
-        ? 'Referências'
+        : activeNodeId === 'references'
+          ? 'Referências'
         : activeNodeId === 'figures'
           ? 'Lista de figuras'
           : activeNodeId === 'tables'
             ? 'Lista de tabelas'
-            : activeNodeId === 'quadros'
+          : activeNodeId === 'quadros'
               ? 'Lista de quadros'
-          : selectedChapter?.title ?? 'Capítulo'
+          : selectedChapter
+            ? getChapterDisplayLabel(selectedChapter, textualChapters)
+            : 'Capítulo'
   const selectedStatus = activeNodeId === 'abstractPt'
-      ? abstractPtStatus
-      : activeNodeId === 'abstractEn'
-        ? abstractEnStatus
-        : activeNodeId === 'references'
-          ? referencesStatus
-          : activeNodeId === 'figures'
-            ? figuresStatus
-            : activeNodeId === 'tables'
-              ? tablesStatus
-              : activeNodeId === 'quadros'
-                ? quadrosStatus
-          : normalizeChapterStatus(selectedChapter ?? textualChapters[0])
-  const selectedSummaryLabel = getDocumentSummaryLabel(activeNodeId, selectedStatus, isChapterView)
+    ? abstractPtStatus
+    : activeNodeId === 'cover'
+      ? coverStatus
+      : activeNodeId === 'titlePage'
+        ? titlePageStatus
+        : activeNodeId === 'toc'
+          ? summaryStatus
+          : activeNodeId === 'abstractEn'
+            ? abstractEnStatus
+            : activeNodeId === 'references'
+              ? referencesStatus
+              : activeNodeId === 'figures'
+                ? figuresStatus
+                : activeNodeId === 'tables'
+                  ? tablesStatus
+                  : activeNodeId === 'quadros'
+                    ? quadrosStatus
+                    : normalizeChapterStatus(selectedChapter ?? topLevelChapters[0])
+  const selectedSummaryLabel = getDocumentSummaryLabel(activeNodeId, selectedStatus, isChapterView, selectedChapter)
   const editorBodyWidth = getEditorBodyWidth(isChapterView, aiOpen)
+  const selectedSectionParent = selectedChapter?.level === 2
+    ? textualChapters.find((chapter) => chapter.id === selectedChapter.parentId) ?? null
+    : null
 
   const contextualAlerts = [
     selectedWordCount < targetWords * 0.45
@@ -1858,6 +2229,10 @@ export function EditorPage() {
     setQuickReferenceForm((current) => ({ ...current, [field]: value }))
   }
 
+  function updateCrossReferenceForm<K extends keyof CrossReferenceFormState>(field: K, value: CrossReferenceFormState[K]) {
+    setCrossReferenceForm((current) => ({ ...current, [field]: value }))
+  }
+
   function updateTabularElementForm<K extends keyof TabularElementFormState>(field: K, value: TabularElementFormState[K]) {
     setTabularElementForm((current) => ({ ...current, [field]: value }))
   }
@@ -1927,6 +2302,139 @@ export function EditorPage() {
     window.requestAnimationFrame(() => {
       chapterEditorRef.current?.focusAtOffset(_nextPosition)
     })
+  }
+
+  function handleCrossReferenceKindChange(kind: CrossReferenceKind) {
+    const nextOption = crossReferenceOptions[kind][0]
+    setCrossReferenceForm({
+      kind,
+      targetId: nextOption?.id ?? '',
+    })
+  }
+
+  function handleCreateCrossReference() {
+    if (!crossReferenceForm.targetId) {
+      setCrossReferenceFeedback(`Selecione ${getCrossReferenceNoun(crossReferenceForm.kind).toLowerCase()} para inserir a referência cruzada.`)
+      return
+    }
+
+    const marker = buildCrossReferenceMarker(crossReferenceForm.kind, crossReferenceForm.targetId)
+    const nextContent = chapterEditorRef.current?.insertCrossReference(
+      crossReferenceForm.kind,
+      crossReferenceForm.targetId,
+      crossReferencesMap.get(`${crossReferenceForm.kind}:${crossReferenceForm.targetId}`),
+    ) ?? `${latestContentRef.current}${marker}`
+
+    setContent(nextContent)
+    latestContentRef.current = nextContent
+    setCrossReferenceDialogOpen(false)
+    setCrossReferenceFeedback(null)
+    focusEditorAtPosition(nextContent.length)
+  }
+
+  function openSectionDialog() {
+    if (!selectedChapter) return
+    const parentChapter = (selectedChapter.level ?? 1) === 2
+      ? textualChapters.find((chapter) => chapter.id === selectedChapter.parentId) ?? selectedChapter
+      : selectedChapter
+    const parentEntry = chapterHierarchy.find((entry) => entry.chapter.id === parentChapter.id)
+    const nextSectionOrder = (parentEntry?.sections.length ?? 0) + 1
+
+    setSectionForm({
+      title: '',
+      sectionOrder: String(nextSectionOrder),
+    })
+    setSectionFeedback(null)
+    setSectionDialogOpen(true)
+  }
+
+  async function handleCreateSection() {
+    if (!selectedChapter) return
+
+    const parentChapter = (selectedChapter.level ?? 1) === 2
+      ? textualChapters.find((chapter) => chapter.id === selectedChapter.parentId) ?? selectedChapter
+      : selectedChapter
+
+    if (!sectionForm.title.trim()) {
+      setSectionFeedback('Informe o título da seção para continuar.')
+      return
+    }
+
+    const normalizedOrder = sectionForm.sectionOrder.trim()
+      ? Number(sectionForm.sectionOrder)
+      : undefined
+
+    if (normalizedOrder !== undefined && (!Number.isFinite(normalizedOrder) || normalizedOrder <= 0)) {
+      setSectionFeedback('Informe uma ordem válida para a seção.')
+      return
+    }
+
+    setSectionSaving(true)
+    setSectionFeedback(null)
+
+    try {
+      const createdSection = await createSection(parentChapter.id, {
+        title: sectionForm.title,
+        sectionOrder: normalizedOrder,
+      })
+
+      await invalidateEditorQueries(queryClient, projectId, parentChapter.id)
+      setSectionDialogOpen(false)
+      setSectionForm(defaultSectionFormState)
+      setSelectedNodeId(`chapter:${createdSection.id}`)
+      navigate(`/editor/${projectId}/${getRouteNodeFromEditorNode(`chapter:${createdSection.id}`)}`, { replace: true })
+    } catch (error) {
+      setSectionFeedback(error instanceof Error ? error.message : 'Não foi possível criar a seção agora.')
+    } finally {
+      setSectionSaving(false)
+    }
+  }
+
+  async function handleSaveSectionTitle() {
+    if (!selectedChapter || (selectedChapter.level ?? 1) !== 2) return
+    if (sectionTitleSaving) return
+
+    const nextTitle = sectionTitleDraft.trim()
+    if (!nextTitle || nextTitle === selectedChapter.title) {
+      setSectionTitleDraft(selectedChapter.title)
+      return
+    }
+
+    setSectionTitleSaving(true)
+    try {
+      const updatedSection = await updateSection(selectedChapter.id, { title: nextTitle })
+      if (updatedSection) {
+        await invalidateEditorQueries(queryClient, projectId, selectedChapter.id)
+        setSectionFeedback(null)
+        setSelectedNodeId(`chapter:${updatedSection.id}`)
+        navigate(`/editor/${projectId}/${getRouteNodeFromEditorNode(`chapter:${updatedSection.id}`)}`, { replace: true })
+      }
+    } catch (error) {
+      setSectionFeedback(error instanceof Error ? error.message : 'Não foi possível atualizar o título da seção.')
+      setSectionTitleDraft(selectedChapter.title)
+    } finally {
+      setSectionTitleSaving(false)
+    }
+  }
+
+  async function handleDeleteSection() {
+    if (!selectedChapter || (selectedChapter.level ?? 1) !== 2) return
+
+    const confirmed = window.confirm(`Excluir a seção "${selectedChapter.title}"?`)
+    if (!confirmed) return
+
+    try {
+      await deleteSection(selectedChapter.id)
+      await invalidateEditorQueries(queryClient, projectId, selectedChapter.parentId ?? selectedChapter.id)
+
+      const parentChapter = textualChapters.find((chapter) => chapter.id === selectedChapter.parentId) ?? topLevelChapters[0] ?? null
+      if (parentChapter) {
+        setSelectedNodeId(`chapter:${parentChapter.id}`)
+        navigate(`/editor/${projectId}/${getRouteNodeFromEditorNode(`chapter:${parentChapter.id}`)}`, { replace: true })
+      }
+    } catch (error) {
+      setSectionFeedback(error instanceof Error ? error.message : 'Não foi possível excluir a seção selecionada.')
+    }
   }
 
   async function handleCreateCitation() {
@@ -2266,11 +2774,32 @@ export function EditorPage() {
               counter={`${groupCounters.pre.filter((status) => status === 'completed').length}/${groupCounters.pre.length}`}
             >
               <DocumentNavItem
+                title="Capa"
+                helper="Modelo institucional"
+                active={activeNodeId === 'cover'}
+                status={coverStatus}
+                disabled
+              />
+              <DocumentNavItem
+                title="Folha de rosto"
+                helper="Modelo institucional"
+                active={activeNodeId === 'titlePage'}
+                status={titlePageStatus}
+                disabled
+              />
+              <DocumentNavItem
                 title="Resumo"
                 helper={`${abstractPtWords} palavras`}
                 active={activeNodeId === 'abstractPt'}
                 status={abstractPtStatus}
                 onClick={() => void handleSelectNode('abstractPt')}
+              />
+              <DocumentNavItem
+                title="Sumário"
+                helper={chapterHierarchy.length > 0 ? `${chapterHierarchy.length} capítulo(s) e seções` : 'Gerado automaticamente a partir da estrutura do documento.'}
+                active={activeNodeId === 'toc'}
+                status={summaryStatus}
+                onClick={() => void handleSelectNode('toc')}
               />
               <DocumentNavItem
                 title="Abstract"
@@ -2285,15 +2814,27 @@ export function EditorPage() {
               title="TEXTUAIS"
               counter={`${groupCounters.text.filter((status) => status === 'completed').length}/${groupCounters.text.length}`}
             >
-              {textualChapters.map((chapter) => (
-                <DocumentNavItem
-                  key={chapter.id}
-                  title={chapter.title}
-                  helper={`${chapter.wordCount} palavras`}
-                  active={activeNodeId === `chapter:${chapter.id}`}
-                  status={normalizeChapterStatus(chapter)}
-                  onClick={() => void handleSelectNode(`chapter:${chapter.id}`)}
-                />
+              {chapterHierarchy.map((entry) => (
+                <div key={entry.chapter.id} className="space-y-2">
+                  <DocumentNavItem
+                    title={entry.chapter.title}
+                    helper={`${getChapterDisplayNumber(entry.chapter, textualChapters)} • ${entry.chapter.wordCount} palavras`}
+                    active={activeNodeId === `chapter:${entry.chapter.id}`}
+                    status={normalizeChapterStatus(entry.chapter)}
+                    onClick={() => void handleSelectNode(`chapter:${entry.chapter.id}`)}
+                  />
+                  {entry.sections.map((section) => (
+                    <DocumentNavItem
+                      key={section.id}
+                      title={section.title}
+                      helper={`${getChapterDisplayNumber(section, textualChapters)} • ${section.wordCount} palavras`}
+                      active={activeNodeId === `chapter:${section.id}`}
+                      status={normalizeChapterStatus(section)}
+                      depth={1}
+                      onClick={() => void handleSelectNode(`chapter:${section.id}`)}
+                    />
+                  ))}
+                </div>
               ))}
             </DocumentSection>
 
@@ -2425,6 +2966,49 @@ export function EditorPage() {
                   target={100}
                   kindLabel="Pré-textual"
                 />
+              ) : null}
+
+              {activeNodeId === 'toc' ? (
+                <SectionCard
+                  title="Sumário"
+                  description="Gerado automaticamente a partir da estrutura do documento."
+                  className="rounded-[30px] border-border/55 bg-white/82 shadow-sm"
+                >
+                  <div className="rounded-[24px] border border-dashed border-border/70 bg-muted/20 px-5 py-4">
+                    <p className="text-sm font-medium text-foreground">Gerado automaticamente a partir da estrutura do documento.</p>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                      Não é possível editar este bloco manualmente. As entradas aparecem conforme capítulos e seções são criados no texto.
+                    </p>
+                  </div>
+                  <div className="mt-5 space-y-4 rounded-[28px] border border-border/70 bg-white/84 px-5 py-5">
+                    {chapterHierarchy.length === 0 ? (
+                      <p className="text-sm leading-6 text-muted-foreground">Nenhum capítulo textual disponível para compor o sumário.</p>
+                    ) : (
+                      chapterHierarchy.map((entry) => (
+                        <div key={entry.chapter.id} className="space-y-3">
+                          <div className="space-y-1">
+                            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-foreground">
+                              {`${entry.chapter.order} ${entry.chapter.title.toUpperCase()}`}
+                            </p>
+                          </div>
+                          {entry.sections.length > 0 ? (
+                            <div className="space-y-2 pl-4">
+                              {entry.sections.map((section) => (
+                                <div key={section.id} className="flex items-start gap-3">
+                                  <p className="min-w-0 flex-1 text-sm leading-6 text-foreground">
+                                    {`${getChapterDisplayNumber(section, textualChapters)} ${section.title}`}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="pl-4 text-sm leading-6 text-muted-foreground">Sem seções vinculadas a este capítulo.</p>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </SectionCard>
               ) : null}
 
               {activeNodeId === 'references' ? (
@@ -2587,14 +3171,24 @@ export function EditorPage() {
               {isChapterView && selectedChapter ? (
                 <div className="space-y-7">
                   <SectionCard
-                    title={selectedChapter.title}
+                    title={selectedLabel}
                     description="Capítulo textual com autosave, leitura confortável e assistência contextual para escrita acadêmica."
                     className="rounded-[34px] border-border/55 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(252,252,253,0.96))] shadow-sm"
                     action={
-                      <StatusBadge
-                        label={progressValue >= 100 ? 'Meta atingida' : 'Escrita em progresso'}
-                        tone={progressValue >= 100 ? 'success' : 'info'}
-                      />
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" size="sm" onClick={openSectionDialog}>
+                          + Seção
+                        </Button>
+                        {(selectedChapter.level ?? 1) === 2 ? (
+                          <Button variant="outline" size="sm" onClick={() => void handleDeleteSection()}>
+                            Excluir seção
+                          </Button>
+                        ) : null}
+                        <StatusBadge
+                          label={progressValue >= 100 ? 'Meta atingida' : 'Escrita em progresso'}
+                          tone={progressValue >= 100 ? 'success' : 'info'}
+                        />
+                      </div>
                     }
                   >
                     <div className="space-y-7">
@@ -2608,6 +3202,33 @@ export function EditorPage() {
                           </div>
                           <StatusBadge label={getStatusLabel(normalizeChapterStatus(selectedChapter))} tone={getStatusTone(normalizeChapterStatus(selectedChapter))} />
                         </div>
+                        {(selectedChapter.level ?? 1) === 2 ? (
+                          <div className="space-y-2 rounded-[22px] border border-border/70 bg-white/82 px-4 py-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/70">Título da seção</p>
+                            <Input
+                              value={sectionTitleDraft}
+                              onChange={(event) => setSectionTitleDraft(event.target.value)}
+                              onBlur={() => void handleSaveSectionTitle()}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault()
+                                  void handleSaveSectionTitle()
+                                }
+                              }}
+                              className="h-11 rounded-2xl bg-white/84"
+                            />
+                            {selectedSectionParent ? (
+                              <p className="text-sm text-muted-foreground">
+                                Subseção de {selectedSectionParent.title}.
+                              </p>
+                            ) : null}
+                            {sectionFeedback ? (
+                              <p className="rounded-[18px] border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                                {sectionFeedback}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
                         <ProgressBar
                           value={progressValue}
                           label="Meta de palavras do capítulo"
@@ -2651,6 +3272,29 @@ export function EditorPage() {
                                   setTabularElementDialogOpen(true)
                                 }}
                                 disabled={tabularElementSaving}
+                              />
+                              <AcademicToolbarButton
+                                icon={Link2}
+                                label="Inserir referência cruzada"
+                                tooltip="Insere uma referência para figura, tabela ou quadro no ponto atual do cursor."
+                                onClick={() => {
+                                  const defaultKind: CrossReferenceKind =
+                                    crossReferenceOptions.FIG.length > 0
+                                      ? 'FIG'
+                                      : crossReferenceOptions.TABLE.length > 0
+                                        ? 'TABLE'
+                                        : crossReferenceOptions.QUADRO.length > 0
+                                          ? 'QUADRO'
+                                          : 'CHAPTER'
+                                  const nextOption = crossReferenceOptions[defaultKind][0]
+                                  setCrossReferenceFeedback(null)
+                                  setCrossReferenceForm({
+                                    kind: defaultKind,
+                                    targetId: nextOption?.id ?? '',
+                                  })
+                                  setCrossReferenceDialogOpen(true)
+                                }}
+                                disabled={!crossReferenceOptions.FIG.length && !crossReferenceOptions.TABLE.length && !crossReferenceOptions.QUADRO.length && !crossReferenceOptions.CHAPTER.length}
                               />
                               </div>
                               <div className="flex min-w-max items-center gap-2 pl-3">
@@ -2714,6 +3358,7 @@ export function EditorPage() {
                               citationsMap={citationsMap}
                               figuresMap={figuresMap}
                               tabularElementsMap={tabularElementsMap}
+                              crossReferencesMap={crossReferencesMap}
                               onChange={(nextValue) => {
                                 setContent(nextValue)
                                 latestContentRef.current = nextValue
@@ -3454,6 +4099,137 @@ export function EditorPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={crossReferenceDialogOpen} onOpenChange={setCrossReferenceDialogOpen}>
+          <DialogContent className="max-w-2xl rounded-[28px] border-border/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(249,250,252,0.98))] p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+            <div className="border-b border-border/60 px-6 py-5 md:px-7">
+              <DialogHeader className="text-left">
+                <DialogTitle className="text-[1.45rem] tracking-[-0.02em] text-foreground">Inserir referência cruzada</DialogTitle>
+                <DialogDescription className="mt-1 max-w-xl text-sm leading-6 text-muted-foreground">
+                  Vincule o texto a uma figura, tabela, quadro, capítulo ou seção já existente no projeto.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+
+            <div className="space-y-5 px-6 py-6 md:px-7">
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-foreground">Tipo</p>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                  {(['FIG', 'TABLE', 'QUADRO', 'CHAPTER', 'SECTION'] as CrossReferenceKind[]).map((kind) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      onClick={() => handleCrossReferenceKindChange(kind)}
+                      className={`rounded-[22px] border px-4 py-3 text-left transition-colors ${
+                        crossReferenceForm.kind === kind
+                          ? 'border-primary/50 bg-primary/6 shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
+                          : 'border-border/70 bg-white/84 hover:border-border'
+                      }`}
+                    >
+                      <p className="text-sm font-medium text-foreground">{getCrossReferenceNoun(kind)}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-foreground">Elemento</p>
+                <Select
+                  value={crossReferenceForm.targetId}
+                  onValueChange={(value) => {
+                    updateCrossReferenceForm('targetId', value)
+                    setCrossReferenceFeedback(null)
+                  }}
+                >
+                  <SelectTrigger className="h-11 rounded-2xl bg-white/84">
+                    <SelectValue placeholder={`Selecione ${getCrossReferenceNoun(crossReferenceForm.kind).toLowerCase()}`} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {currentCrossReferenceOptions.map((option) => (
+                      <SelectItem key={`${option.kind}:${option.id}`} value={option.id}>
+                        {option.label} — {option.description}{option.used ? '' : ' • não usado no texto'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="rounded-[22px] border border-border/70 bg-[linear-gradient(180deg,rgba(250,251,252,0.95),rgba(255,255,255,0.98))] px-4 py-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/70">Preview</p>
+                <p className="mt-3 text-[15px] leading-7 text-foreground">
+                  {currentCrossReferencePreview?.label ?? getCrossReferenceInvalidLabel()}
+                </p>
+              </div>
+
+              {crossReferenceFeedback ? (
+                <p className="rounded-[18px] border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  {crossReferenceFeedback}
+                </p>
+              ) : null}
+            </div>
+
+            <DialogFooter className="border-t border-border/60 px-6 py-5 md:px-7">
+              <Button variant="outline" onClick={() => setCrossReferenceDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={handleCreateCrossReference} disabled={!crossReferenceForm.targetId}>
+                <Link2 className="h-4 w-4" />
+                Inserir referência cruzada
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={sectionDialogOpen} onOpenChange={setSectionDialogOpen}>
+          <DialogContent className="max-w-xl rounded-[28px] border-border/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(249,250,252,0.98))] p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+            <div className="border-b border-border/60 px-6 py-5 md:px-7">
+              <DialogHeader className="text-left">
+                <DialogTitle className="text-[1.45rem] tracking-[-0.02em] text-foreground">Nova seção</DialogTitle>
+                <DialogDescription className="mt-1 max-w-xl text-sm leading-6 text-muted-foreground">
+                  Crie uma subseção para organizar a escrita sem perder a estrutura acadêmica do capítulo.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+
+            <div className="space-y-5 px-6 py-6 md:px-7">
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-foreground">Título da seção</p>
+                <Input
+                  value={sectionForm.title}
+                  onChange={(event) => setSectionForm((current) => ({ ...current, title: event.target.value }))}
+                  placeholder="Ex.: Contextualização"
+                  className="h-11 rounded-2xl bg-white/84"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-foreground">Ordem opcional</p>
+                <Input
+                  value={sectionForm.sectionOrder}
+                  onChange={(event) => setSectionForm((current) => ({ ...current, sectionOrder: event.target.value }))}
+                  placeholder="Ex.: 1"
+                  className="h-11 rounded-2xl bg-white/84"
+                />
+              </div>
+
+              {sectionFeedback ? (
+                <p className="rounded-[18px] border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  {sectionFeedback}
+                </p>
+              ) : null}
+            </div>
+
+            <DialogFooter className="border-t border-border/60 px-6 py-5 md:px-7">
+              <Button variant="outline" onClick={() => setSectionDialogOpen(false)} disabled={sectionSaving}>
+                Cancelar
+              </Button>
+              <Button onClick={() => void handleCreateSection()} disabled={sectionSaving || !sectionForm.title.trim()}>
+                {sectionSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                {sectionSaving ? 'Criando...' : 'Criar seção'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={citationDialogOpen} onOpenChange={setCitationDialogOpen}>
           <DialogContent className="max-w-2xl rounded-[28px] border-border/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(249,250,252,0.98))] p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
             <div className="border-b border-border/60 px-6 py-5 md:px-7">
@@ -3772,9 +4548,10 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
   citationsMap: Map<string, Citation>
   figuresMap: Map<string, Figure>
   tabularElementsMap: Map<string, TabularElement>
+  crossReferencesMap: Map<string, CrossReferenceRenderItem>
   onChange: (value: string) => void
   placeholder: string
-}>(({ value, citationsMap, figuresMap, tabularElementsMap, onChange, placeholder }, ref) => {
+}>(({ value, citationsMap, figuresMap, tabularElementsMap, crossReferencesMap, onChange, placeholder }, ref) => {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const rawValueRef = useRef(value)
   const lastSelectionRef = useRef<{ start: number; end: number } | null>(null)
@@ -3787,7 +4564,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
     rawValueRef.current = value
 
     if (needsRerender) {
-      renderContentEditableValue(root, value, citationsMap, figuresMap, tabularElementsMap)
+      renderContentEditableValue(root, value, citationsMap, figuresMap, tabularElementsMap, crossReferencesMap)
     } else {
       Array.from(root.querySelectorAll<HTMLElement>('[data-citation-id]')).forEach((chip) => {
         const citationId = chip.dataset.citationId ?? ''
@@ -3817,8 +4594,15 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
         const nextNode = createTabularElementNode(document, itemId, tabularElementsMap.get(itemId), index + 1, 'quadro')
         node.replaceWith(nextNode)
       })
+      Array.from(root.querySelectorAll<HTMLElement>('[data-xref-kind][data-xref-target-id]')).forEach((chip) => {
+        const kind = chip.dataset.xrefKind as CrossReferenceKind | undefined
+        const targetId = chip.dataset.xrefTargetId ?? ''
+        if (!kind) return
+        const nextNode = createCrossReferenceNode(document, kind, targetId, crossReferencesMap.get(`${kind}:${targetId}`))
+        chip.replaceWith(nextNode)
+      })
     }
-  }, [citationsMap, figuresMap, tabularElementsMap, value])
+  }, [citationsMap, crossReferencesMap, figuresMap, tabularElementsMap, value])
 
   useEffect(() => {
     const updateSelectionSnapshot = () => {
@@ -3881,6 +4665,31 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       onChange(nextValue)
       return nextValue
     },
+    insertCrossReference(kind: CrossReferenceKind, targetId: string, referenceOverride?: CrossReferenceRenderItem) {
+      const root = rootRef.current
+      if (!root) return value
+
+      const selection = window.getSelection()
+      const range = selection && selection.rangeCount > 0 && root.contains(selection.anchorNode)
+        ? selection.getRangeAt(0)
+        : null
+      const referenceNode = createCrossReferenceNode(document, kind, targetId, referenceOverride ?? crossReferencesMap.get(`${kind}:${targetId}`))
+
+      if (range) {
+        range.deleteContents()
+        range.insertNode(referenceNode)
+        moveCaretAfterNode(referenceNode)
+      } else {
+        root.append(referenceNode)
+        moveCaretAfterNode(referenceNode)
+      }
+
+      const nextValue = serializeEditorContent(root)
+      rawValueRef.current = nextValue
+      lastSelectionRef.current = null
+      onChange(nextValue)
+      return nextValue
+    },
     insertFigure(figureId: string, figureOverride?: Figure) {
       const root = rootRef.current
       if (!root) {
@@ -3904,7 +4713,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       const { nextValue, caretOffset } = buildBlockInsertionContent(value, startOffset, endOffset, marker)
 
       rawValueRef.current = nextValue
-      renderContentEditableValue(root, nextValue, citationsMap, nextFiguresMap, tabularElementsMap)
+      renderContentEditableValue(root, nextValue, citationsMap, nextFiguresMap, tabularElementsMap, crossReferencesMap)
       window.requestAnimationFrame(() => {
         placeCaretAtSerializedOffset(root, caretOffset)
       })
@@ -3937,7 +4746,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       const { nextValue, caretOffset } = buildBlockInsertionContent(value, startOffset, endOffset, marker)
 
       rawValueRef.current = nextValue
-      renderContentEditableValue(root, nextValue, citationsMap, figuresMap, nextTabularElementsMap)
+      renderContentEditableValue(root, nextValue, citationsMap, figuresMap, nextTabularElementsMap, crossReferencesMap)
       window.requestAnimationFrame(() => {
         placeCaretAtSerializedOffset(root, caretOffset)
       })
@@ -3947,7 +4756,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
       onChange(nextValue)
       return { value: nextValue, caretOffset }
     },
-  }), [citationsMap, figuresMap, onChange, tabularElementsMap, value])
+  }), [citationsMap, crossReferencesMap, figuresMap, onChange, tabularElementsMap, value])
 
   function emitCurrentValue() {
     const root = rootRef.current
@@ -3988,7 +4797,7 @@ const ChapterContentEditor = forwardRef<ChapterEditorHandle, {
         return container.childNodes[offset] ?? null
       })()
 
-      if (sibling instanceof HTMLElement && (sibling.dataset.citationId || sibling.dataset.figureId || sibling.dataset.tableId || sibling.dataset.quadroId)) {
+      if (sibling instanceof HTMLElement && (sibling.dataset.citationId || sibling.dataset.figureId || sibling.dataset.tableId || sibling.dataset.quadroId || (sibling.dataset.xrefKind && sibling.dataset.xrefTargetId))) {
         event.preventDefault()
         const nextCaretTarget = event.key === 'Backspace' ? sibling.previousSibling : sibling.nextSibling
         sibling.remove()
@@ -4102,22 +4911,27 @@ function DocumentNavItem({
   active,
   status,
   onClick,
+  depth = 0,
+  disabled = false,
 }: {
   title: string
   helper: string
   active: boolean
   status: DocumentStatus
-  onClick: () => void
+  onClick?: () => void
+  depth?: number
+  disabled?: boolean
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={`group relative w-full overflow-hidden rounded-[22px] border px-4 py-4 text-left transition-all duration-200 ${
         active
           ? 'border-primary/15 bg-[linear-gradient(180deg,rgba(24,53,104,0.08),rgba(24,53,104,0.03))] text-foreground shadow-sm'
           : 'border-transparent bg-transparent hover:border-border/70 hover:bg-white/70'
-      }`}
+      } ${depth > 0 ? 'ml-5 w-[calc(100%-1.25rem)]' : ''}`}
     >
       <span
         className={`absolute inset-y-3 left-0 w-1 rounded-r-full transition-colors ${

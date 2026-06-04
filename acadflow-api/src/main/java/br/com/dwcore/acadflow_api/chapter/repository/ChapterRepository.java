@@ -9,4 +9,8 @@ import java.util.UUID;
 public interface ChapterRepository extends JpaRepository<Chapter, UUID> {
 
     List<Chapter> findByProjectIdOrderByOrderIndexAsc(UUID projectId);
+
+    List<Chapter> findByProjectIdAndParentIsNullOrderByOrderIndexAsc(UUID projectId);
+
+    List<Chapter> findByParentIdOrderBySectionOrderAsc(UUID parentId);
 }

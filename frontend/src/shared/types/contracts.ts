@@ -70,6 +70,9 @@ export interface Chapter {
   title: string
   type: ChapterType
   content: string
+  level?: 1 | 2
+  parentId?: string
+  sectionOrder?: number
   status: ChapterStatus
   order: number
   wordCount: number
