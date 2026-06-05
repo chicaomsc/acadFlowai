@@ -121,6 +121,14 @@
 			<scope>test</scope>
 		</dependency>
 
+		<!-- MockWebServer — in-process HTTP server for GotenbergClient tests -->
+		<dependency>
+			<groupId>com.squareup.okhttp3</groupId>
+			<artifactId>mockwebserver</artifactId>
+			<version>4.12.0</version>
+			<scope>test</scope>
+		</dependency>
+
 		<!-- Apache POI - DOCX generation -->
 		<dependency>
 			<groupId>org.apache.poi</groupId>

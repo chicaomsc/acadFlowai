@@ -5,7 +5,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { exportStatusQuery } from '@/features/export/services/export.service'
 import { projectDetailsQuery } from '@/features/projects/services/projects.service'
 import { getActiveProjectId, setActiveProjectId } from '@/shared/services/active-project.service'
-import { downloadExportArtifact, generateExportArtifact } from '@/shared/services/export.service'
+import { downloadExportArtifact, downloadPdfExportArtifact, generateExportArtifact } from '@/shared/services/export.service'
 import { getAcademicTemplateLabel } from '@/shared/services/project.service'
 import { EmptyState } from '@/shared/components/feedback/empty-state'
 import { ErrorState } from '@/shared/components/feedback/error-state'
@@ -81,6 +81,17 @@ function classifyPendingItem(item: string): PendingSectionKey {
   return 'other'
 }
 
+function buildDownloadFileName(title: string, extension: 'docx' | 'pdf') {
+  const normalizedTitle = title
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const baseName = normalizedTitle && normalizedTitle !== 'Projeto sem título' ? normalizedTitle : 'TCC'
+  return `${baseName}.${extension}`
+}
+
 export function ExportPage() {
   const { projectId: routeProjectId } = useParams<{ projectId?: string }>()
   const [searchParams] = useSearchParams()
@@ -95,10 +106,13 @@ export function ExportPage() {
   })
   const [exporting, setExporting] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [pdfDownloading, setPdfDownloading] = useState(false)
   const [downloadInfo, setDownloadInfo] = useState<{ fileName: string; downloadUrl: string } | null>(null)
   const [downloadSuccess, setDownloadSuccess] = useState('')
+  const [pdfDownloadSuccess, setPdfDownloadSuccess] = useState('')
   const [exportError, setExportError] = useState('')
   const [downloadError, setDownloadError] = useState('')
+  const [pdfDownloadError, setPdfDownloadError] = useState('')
   const activeProjectId = routeProjectId ?? getActiveProjectId() ?? undefined
 
   useEffect(() => {
@@ -172,8 +186,8 @@ export function ExportPage() {
   }
 
   const canExport = data.ready && data.pendingItems.length === 0
-  const docxRealAvailable = format === 'docx'
-  const canGenerateArtifact = canExport && docxRealAvailable
+  const canGenerateDocx = canExport
+  const canGeneratePdf = canExport
   const appliedTemplateLabel = getAcademicTemplateLabel(projectDetails.data?.project.templateProfile)
   const projectTitle = projectDetails.data?.project.title ?? 'Projeto sem título'
   const projectStatus = (projectDetails.data?.project.status ?? 'planning') as keyof typeof statusLabel
@@ -296,7 +310,7 @@ export function ExportPage() {
             </div>
           </SectionCard>
 
-          <SectionCard title="Ação final" description="DOCX com download real. PDF e slides permanecem fora desta integração por enquanto.">
+          <SectionCard title="Ação final" description="DOCX e PDF ficam disponíveis como formatos de download direto.">
             <div className="space-y-3">
               <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
                 <div className="flex items-center gap-3">
@@ -333,14 +347,85 @@ export function ExportPage() {
                   </p>
                 </div>
               ) : null}
-              {canExport && !docxRealAvailable ? (
+              {canExport && format === 'slides' ? (
                 <div className="rounded-[22px] border border-border bg-muted/30 px-4 py-4">
                   <p className="text-sm font-medium text-foreground">Formato ainda não liberado</p>
                   <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    O download real está disponível apenas para DOCX por enquanto. Selecione DOCX para gerar o arquivo.
+                    O download real está disponível para DOCX e PDF. Slides permanecem fora desta integração por enquanto.
                   </p>
                 </div>
               ) : null}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-[24px] border border-border bg-white/75 px-4 py-4">
+                  <p className="text-sm font-semibold text-foreground">Exportar DOCX</p>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">Formato editável para Word.</p>
+                  <Button
+                    className="mt-4 w-full rounded-2xl"
+                    disabled={exporting || !canGenerateDocx}
+                    onClick={async () => {
+                      if (!canGenerateDocx) return
+                      setFormat('docx')
+                      setExportError('')
+                      setDownloadError('')
+                      setDownloadSuccess('')
+                      setPdfDownloadError('')
+                      setPdfDownloadSuccess('')
+                      setExporting(true)
+                      setDownloadInfo(null)
+
+                      try {
+                        const artifact = await generateExportArtifact(activeProjectId, 'docx')
+                        if (artifact) {
+                          setDownloadInfo({
+                            fileName: artifact.fileName,
+                            downloadUrl: artifact.downloadUrl,
+                          })
+                        } else {
+                          setExportError('Nenhum arquivo foi retornado para este projeto.')
+                        }
+                      } catch (error) {
+                        setExportError(error instanceof Error ? error.message : 'Tente novamente em instantes.')
+                      } finally {
+                        setExporting(false)
+                      }
+                    }}
+                  >
+                    <Download className="h-4 w-4" />
+                    {exporting ? 'Exportando DOCX...' : 'Exportar DOCX'}
+                  </Button>
+                </div>
+                <div className="rounded-[24px] border border-border bg-white/75 px-4 py-4">
+                  <p className="text-sm font-semibold text-foreground">Exportar PDF</p>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">Formato pronto para impressão e envio.</p>
+                  <Button
+                    className="mt-4 w-full rounded-2xl"
+                    disabled={pdfDownloading || !canGeneratePdf}
+                    onClick={async () => {
+                      if (!canGeneratePdf || !activeProjectId) return
+                      setFormat('pdf')
+                      setPdfDownloadError('')
+                      setPdfDownloadSuccess('')
+                      setExportError('')
+                      setDownloadError('')
+                      setDownloadSuccess('')
+                      setPdfDownloading(true)
+
+                      try {
+                        await downloadPdfExportArtifact(activeProjectId, buildDownloadFileName(projectTitle, 'pdf'))
+                        setPdfDownloadSuccess(`O download de ${buildDownloadFileName(projectTitle, 'pdf')} foi iniciado com sucesso.`)
+                      } catch (error) {
+                        const errorMessage = error instanceof Error ? error.message : 'Não foi possível gerar o PDF. Tente novamente em instantes.'
+                        setPdfDownloadError(errorMessage)
+                      } finally {
+                        setPdfDownloading(false)
+                      }
+                    }}
+                  >
+                    <FileText className="h-4 w-4" />
+                    {pdfDownloading ? 'Exportando PDF...' : 'Exportar PDF'}
+                  </Button>
+                </div>
+              </div>
               {exporting ? (
                 <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
                   <p className="text-sm font-medium text-foreground">Gerando DOCX...</p>
@@ -371,6 +456,12 @@ export function ExportPage() {
                   <p className="mt-1 text-sm leading-6 text-muted-foreground">{downloadSuccess}</p>
                 </div>
               ) : null}
+              {pdfDownloadSuccess ? (
+                <div className="rounded-[22px] border border-emerald-100 bg-emerald-50/70 px-4 py-4">
+                  <p className="text-sm font-medium text-foreground">Download iniciado</p>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">{pdfDownloadSuccess}</p>
+                </div>
+              ) : null}
               {downloadInfo ? (
                 <Button
                   variant="outline"
@@ -399,6 +490,12 @@ export function ExportPage() {
                   {downloading ? 'Baixando DOCX...' : 'Baixar DOCX'}
                 </Button>
               ) : null}
+              {pdfDownloadError ? (
+                <div className="rounded-[22px] border border-rose-100 bg-rose-50/70 px-4 py-4">
+                  <p className="text-sm font-medium text-foreground">Não foi possível baixar o PDF</p>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">{pdfDownloadError}</p>
+                </div>
+              ) : null}
               {downloadError ? (
                 <div className="rounded-[22px] border border-rose-100 bg-rose-50/70 px-4 py-4">
                   <p className="text-sm font-medium text-foreground">Não foi possível baixar o DOCX</p>
@@ -411,37 +508,6 @@ export function ExportPage() {
                   <p className="mt-1 text-sm leading-6 text-muted-foreground">{exportError}</p>
                 </div>
               ) : null}
-              <Button
-                className="w-full rounded-2xl"
-                disabled={exporting || !canGenerateArtifact}
-                onClick={async () => {
-                  if (!canGenerateArtifact) return
-                  setExportError('')
-                  setDownloadError('')
-                  setDownloadSuccess('')
-                  setExporting(true)
-                  setDownloadInfo(null)
-
-                  try {
-                    const artifact = await generateExportArtifact(activeProjectId, format)
-                    if (artifact) {
-                      setDownloadInfo({
-                        fileName: artifact.fileName,
-                        downloadUrl: artifact.downloadUrl,
-                      })
-                    } else {
-                      setExportError('Nenhum arquivo foi retornado para este projeto.')
-                    }
-                  } catch (error) {
-                    setExportError(error instanceof Error ? error.message : 'Tente novamente em instantes.')
-                  } finally {
-                    setExporting(false)
-                  }
-                }}
-              >
-                <Download className="h-4 w-4" />
-                {exporting ? 'Gerando DOCX...' : downloadInfo ? 'Gerar DOCX novamente' : 'Gerar DOCX'}
-              </Button>
             </div>
           </SectionCard>
         </div>

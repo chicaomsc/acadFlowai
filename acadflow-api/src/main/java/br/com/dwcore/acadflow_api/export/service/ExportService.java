@@ -12,6 +12,8 @@ import br.com.dwcore.acadflow_api.export.docx.dto.LoadedFigure;
 import br.com.dwcore.acadflow_api.export.dto.CreateExportRequest;
 import br.com.dwcore.acadflow_api.export.dto.ExportArtifactResponse;
 import br.com.dwcore.acadflow_api.export.dto.ExportStatusResponse;
+import br.com.dwcore.acadflow_api.export.dto.PdfExportResult;
+import br.com.dwcore.acadflow_api.export.pdf.GotenbergClient;
 import br.com.dwcore.acadflow_api.figure.domain.Figure;
 import br.com.dwcore.acadflow_api.figure.repository.FigureRepository;
 import br.com.dwcore.acadflow_api.figure.service.FigureStorageService;
@@ -84,6 +86,7 @@ public class ExportService {
     private final AcademicTableRepository tableRepository;
     private final UserService userService;
     private final DocxBuilder docxBuilder;
+    private final GotenbergClient gotenbergClient;
 
     @Value("${app.export.dir}")
     private String exportDir;
@@ -118,32 +121,11 @@ public class ExportService {
         }
 
         String fileName = generateFileName(project.getTitle(), request.format());
-        List<Chapter> chapters = chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId());
-        List<Reference> references = referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId());
-        List<Citation> citations = citationRepository.findByProjectId(project.getId());
-        Map<UUID, Citation> citationLookup = citations.stream()
-                .collect(Collectors.toMap(Citation::getId, c -> c));
-
-        List<Figure> figures = figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId());
-        Map<UUID, LoadedFigure> figureLookup = new HashMap<>();
-        for (Figure f : figures) {
-            try {
-                byte[] data = figureStorageService.load(f.getStorageKey());
-                figureLookup.put(f.getId(), new LoadedFigure(f, data));
-            } catch (IOException e) {
-                log.warn("Figura {} não pôde ser carregada do storage: {}", f.getId(), e.getMessage());
-            }
-        }
-
-        List<AcademicTable> academicTables = tableRepository.findByProjectIdOrderByCreatedAtAsc(project.getId());
-        Map<UUID, AcademicTable> tableLookup = academicTables.stream()
-                .collect(Collectors.toMap(AcademicTable::getId, t -> t));
-
+        byte[] content = buildDocxBytes(project);
         try {
-            byte[] content = docxBuilder.build(project, chapters, references, citationLookup, figureLookup, tableLookup);
             saveFile(project.getId(), fileName, content);
         } catch (IOException e) {
-            throw new UncheckedIOException("Falha ao gerar arquivo DOCX", e);
+            throw new UncheckedIOException("Falha ao salvar arquivo de exportação", e);
         }
         String downloadUrl = "/exports/download/" + project.getId() + "/" + fileName;
         return new ExportArtifactResponse(project.getId(), request.format(), fileName, downloadUrl, LocalDateTime.now());
@@ -368,6 +350,50 @@ public class ExportService {
                     reported = true;
                 }
             }
+        }
+    }
+
+    public PdfExportResult createPdfExport(UUID projectId, String userEmail) {
+        Project project = getOwnedProject(projectId, userEmail);
+        ExportStatusResponse status = calculateStatus(project, "pdf");
+
+        if (!status.ready()) {
+            throw new BusinessException("Projeto possui pendências que impedem a exportação");
+        }
+
+        byte[] docxBytes = buildDocxBytes(project);
+        String docxFileName = generateFileName(project.getTitle(), "docx");
+        byte[] pdfBytes = gotenbergClient.toPdf(docxBytes, docxFileName);
+        String pdfFileName = generateFileName(project.getTitle(), "pdf");
+        return new PdfExportResult(pdfBytes, pdfFileName);
+    }
+
+    private byte[] buildDocxBytes(Project project) {
+        List<Chapter> chapters = chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId());
+        List<Reference> references = referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId());
+        List<Citation> citations = citationRepository.findByProjectId(project.getId());
+        Map<UUID, Citation> citationLookup = citations.stream()
+                .collect(Collectors.toMap(Citation::getId, c -> c));
+
+        List<Figure> figures = figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId());
+        Map<UUID, LoadedFigure> figureLookup = new HashMap<>();
+        for (Figure f : figures) {
+            try {
+                byte[] data = figureStorageService.load(f.getStorageKey());
+                figureLookup.put(f.getId(), new LoadedFigure(f, data));
+            } catch (IOException e) {
+                log.warn("Figura {} não pôde ser carregada do storage: {}", f.getId(), e.getMessage());
+            }
+        }
+
+        List<AcademicTable> academicTables = tableRepository.findByProjectIdOrderByCreatedAtAsc(project.getId());
+        Map<UUID, AcademicTable> tableLookup = academicTables.stream()
+                .collect(Collectors.toMap(AcademicTable::getId, t -> t));
+
+        try {
+            return docxBuilder.build(project, chapters, references, citationLookup, figureLookup, tableLookup);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Falha ao gerar arquivo DOCX", e);
         }
     }
 

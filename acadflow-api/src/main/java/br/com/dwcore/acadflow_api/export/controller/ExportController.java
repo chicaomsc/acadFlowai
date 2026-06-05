@@ -3,6 +3,7 @@ package br.com.dwcore.acadflow_api.export.controller;
 import br.com.dwcore.acadflow_api.export.dto.CreateExportRequest;
 import br.com.dwcore.acadflow_api.export.dto.ExportArtifactResponse;
 import br.com.dwcore.acadflow_api.export.dto.ExportStatusResponse;
+import br.com.dwcore.acadflow_api.export.dto.PdfExportResult;
 import br.com.dwcore.acadflow_api.export.service.ExportService;
 import br.com.dwcore.acadflow_api.shared.exception.ResourceNotFoundException;
 import br.com.dwcore.acadflow_api.shared.response.ApiResponse;
@@ -46,6 +47,17 @@ public class ExportController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success("Exportação gerada com sucesso",
                         exportService.createExport(request, userDetails.getUsername())));
+    }
+
+    @GetMapping("/projects/{projectId}/export/pdf")
+    public ResponseEntity<byte[]> exportPdf(
+            @PathVariable UUID projectId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        PdfExportResult result = exportService.createPdfExport(projectId, userDetails.getUsername());
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + result.fileName() + "\"")
+                .body(result.pdfBytes());
     }
 
     @GetMapping("/exports/download/{projectId}/{fileName}")

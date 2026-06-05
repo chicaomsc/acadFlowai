@@ -12,5 +12,16 @@ services:
     volumes:
       - acadflow_postgres_data:/var/lib/postgresql/data
 
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: acadflow-gotenberg
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    command:
+      - "gotenberg"
+      - "--api-timeout=30s"
+      - "--libreoffice-restart-after=10"
+
 volumes:
   acadflow_postgres_data:

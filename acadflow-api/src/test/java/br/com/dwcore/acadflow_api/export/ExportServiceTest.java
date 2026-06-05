@@ -11,7 +11,9 @@ import br.com.dwcore.acadflow_api.citation.repository.CitationRepository;
 import br.com.dwcore.acadflow_api.academictable.repository.AcademicTableRepository;
 import br.com.dwcore.acadflow_api.export.docx.DocxBuilder;
 import br.com.dwcore.acadflow_api.export.dto.CreateExportRequest;
+import br.com.dwcore.acadflow_api.export.pdf.GotenbergClient;
 import br.com.dwcore.acadflow_api.export.service.ExportService;
+import br.com.dwcore.acadflow_api.shared.exception.PdfConversionException;
 import br.com.dwcore.acadflow_api.figure.domain.Figure;
 import br.com.dwcore.acadflow_api.figure.repository.FigureRepository;
 import br.com.dwcore.acadflow_api.figure.service.FigureStorageService;
@@ -64,6 +66,7 @@ class ExportServiceTest {
     @Mock private AcademicTableRepository tableRepository;
     @Mock private UserService userService;
     @Mock private DocxBuilder docxBuilder;
+    @Mock private GotenbergClient gotenbergClient;
 
     @InjectMocks
     private ExportService exportService;
@@ -876,6 +879,105 @@ class ExportServiceTest {
 
         assertThat(status.ready()).isTrue();
         assertThat(status.pendingItems()).noneMatch(s -> s.contains("referência cruzada"));
+    }
+
+    // ── createPdfExport ───────────────────────────────────────────────────────
+
+    @Test
+    void shouldReturnPdfBytesWhenProjectIsReady() throws Exception {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+        byte[] fakePdf = "%PDF-1.4 fake".getBytes();
+
+        mockOwnership(user, project);
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId()))
+                .thenReturn(buildRequiredChapters(project));
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+        when(docxBuilder.build(any(), any(), any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
+        when(gotenbergClient.toPdf(any(), any())).thenReturn(fakePdf);
+
+        var result = exportService.createPdfExport(project.getId(), user.getEmail());
+
+        assertThat(result.pdfBytes()).isEqualTo(fakePdf);
+        assertThat(result.fileName()).endsWith(".pdf");
+        assertThat(result.fileName()).doesNotContain(" ");
+    }
+
+    @Test
+    void shouldBlockPdfExportWhenProjectHasPendingItems() {
+        User user = buildUser("aluno@email.com");
+        Project project = buildProject(user); // missing metadata → pendingItems not empty
+
+        mockOwnership(user, project);
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId()))
+                .thenReturn(List.of(buildChapter(project, null)));
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of());
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+
+        assertThatThrownBy(() -> exportService.createPdfExport(project.getId(), user.getEmail()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("pendências");
+    }
+
+    @Test
+    void shouldDenyPdfExportForAnotherUsersProject() {
+        User intruder = buildUser("intruso@email.com");
+        UUID projectId = UUID.randomUUID();
+
+        when(userService.findEntityByEmail(intruder.getEmail())).thenReturn(intruder);
+        when(projectRepository.findByIdAndUserId(projectId, intruder.getId()))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> exportService.createPdfExport(projectId, intruder.getEmail()))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessageContaining("Projeto não encontrado");
+    }
+
+    @Test
+    void shouldPropagatePdfConversionExceptionFromGotenberg() throws Exception {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+
+        mockOwnership(user, project);
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId()))
+                .thenReturn(buildRequiredChapters(project));
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+        when(docxBuilder.build(any(), any(), any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
+        when(gotenbergClient.toPdf(any(), any()))
+                .thenThrow(new PdfConversionException("Gotenberg returned 503"));
+
+        assertThatThrownBy(() -> exportService.createPdfExport(project.getId(), user.getEmail()))
+                .isInstanceOf(PdfConversionException.class)
+                .hasMessageContaining("503");
+    }
+
+    @Test
+    void shouldReturnEmptyPdfBytesWhenGotenbergReturnsEmpty() throws Exception {
+        User user = buildUser("aluno@email.com");
+        Project project = buildReadyProject(user);
+
+        mockOwnership(user, project);
+        when(chapterRepository.findByProjectIdOrderByOrderIndexAsc(project.getId()))
+                .thenReturn(buildRequiredChapters(project));
+        when(referenceRepository.findByProjectIdOrderByCreatedAtDesc(project.getId()))
+                .thenReturn(List.of(buildReference(project, true)));
+        when(citationRepository.findByProjectId(project.getId())).thenReturn(List.of());
+        when(figureRepository.findByProjectIdOrderByCreatedAtAsc(project.getId())).thenReturn(List.of());
+        when(docxBuilder.build(any(), any(), any(), any(), any(), any())).thenReturn(new byte[]{1, 2, 3});
+        when(gotenbergClient.toPdf(any(), any())).thenReturn(new byte[0]);
+
+        var result = exportService.createPdfExport(project.getId(), user.getEmail());
+
+        assertThat(result.pdfBytes()).isEmpty();
+        assertThat(result.fileName()).endsWith(".pdf");
     }
 
     @Test
