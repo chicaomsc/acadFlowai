@@ -58,7 +58,13 @@ public class TableRenderer {
 
         // Spacer after table block
         XWPFParagraph spacer = doc.createParagraph();
-        spacer.createRun().setText("");
+        spacer.setStyle(DocxHelper.STYLE_BODY);
+        spacer.setSpacingBefore(0);
+        spacer.setSpacingAfter(0);
+        spacer.setIndentationFirstLine(0);
+        XWPFRun spacerRun = spacer.createRun();
+        DocxHelper.applyFont(spacerRun, DocxHelper.FONT_BODY, false);
+        spacerRun.setText("");
     }
 
     private void applyBorders(XWPFTable xTable, AcademicTableType type) {

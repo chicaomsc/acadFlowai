@@ -166,7 +166,12 @@ public final class DocxHelper {
      * Uses setFontSize(double) which takes points and internally converts to half-points.
      */
     public static void applyFont(XWPFRun run, int pts, boolean bold) {
-        run.setFontFamily(FONT);
+        CTR ctr = run.getCTR();
+        CTRPr rpr = ctr.isSetRPr() ? ctr.getRPr() : ctr.addNewRPr();
+        CTFonts fonts = rpr.addNewRFonts();
+        fonts.setAscii(FONT);
+        fonts.setHAnsi(FONT);
+        fonts.setCs(FONT);
         run.setFontSize((double) pts);
         run.setBold(bold);
     }

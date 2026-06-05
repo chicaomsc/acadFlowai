@@ -1,5 +1,7 @@
 package br.com.dwcore.acadflow_api.export;
 
+import br.com.dwcore.acadflow_api.academictable.domain.AcademicTable;
+import br.com.dwcore.acadflow_api.academictable.domain.AcademicTableType;
 import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterStatus;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
@@ -21,8 +23,11 @@ import br.com.dwcore.acadflow_api.user.domain.UserPlan;
 import br.com.dwcore.acadflow_api.user.domain.UserRole;
 import org.apache.poi.xwpf.usermodel.*;
 import org.junit.jupiter.api.Test;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSpacing;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STLineSpacingRule;
 
 import java.io.ByteArrayInputStream;
+import java.math.BigInteger;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -405,6 +410,243 @@ class AbntFormattingTest {
             assertThat(doc.getStyles().getStyle(DocxHelper.STYLE_BODY))
                     .as("document must contain named style " + DocxHelper.STYLE_BODY)
                     .isNotNull();
+        }
+    }
+
+    // ── Line spacing ─────────────────────────────────────────────────────────
+
+    @Test
+    void bodyParagraphShouldHave15LineSpacingInXml() throws Exception {
+        Project project = buildProject();
+        List<Chapter> chapters = List.of(chapter(project, ChapterType.INTRODUCTION,
+                "Introdução", 1, "Parágrafo para teste de espaçamento 1.5."));
+        byte[] bytes = docxBuilder.build(project, chapters, List.of());
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            Optional<XWPFParagraph> bodyPara = doc.getParagraphs().stream()
+                    .filter(p -> p.getText().contains("espaçamento 1.5"))
+                    .findFirst();
+            assertThat(bodyPara).isPresent();
+            CTSpacing spacing = bodyPara.get().getCTP().getPPr().getSpacing();
+            assertThat(spacing).isNotNull();
+            assertThat(spacing.getLine())
+                    .as("body paragraph must have w:line=360 (1.5x with AUTO rule)")
+                    .isEqualTo(BigInteger.valueOf(360));
+            assertThat(spacing.getLineRule())
+                    .as("body paragraph line rule must be AUTO")
+                    .isEqualTo(STLineSpacingRule.AUTO);
+        }
+    }
+
+    @Test
+    void referencesShouldBeSingleSpaced() throws Exception {
+        Project project = buildProject();
+        Reference ref = buildRef(project);
+        byte[] bytes = docxBuilder.build(project, List.of(), List.of(ref));
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            Optional<XWPFParagraph> refPara = doc.getParagraphs().stream()
+                    .filter(p -> p.getText().contains("MARTIN"))
+                    .findFirst();
+            assertThat(refPara).isPresent();
+            CTSpacing spacing = refPara.get().getCTP().getPPr().getSpacing();
+            assertThat(spacing).isNotNull();
+            assertThat(spacing.getLine())
+                    .as("reference paragraph must be single-spaced (w:line=240)")
+                    .isEqualTo(BigInteger.valueOf(240));
+        }
+    }
+
+    // ── Heading spacing ──────────────────────────────────────────────────────
+
+    @Test
+    void chapterHeadingShouldHaveSpacingBeforeAndAfter() throws Exception {
+        Project project = buildProject();
+        List<Chapter> chapters = List.of(chapter(project, ChapterType.INTRODUCTION,
+                "Introdução", 1, "Conteúdo do capítulo."));
+        byte[] bytes = docxBuilder.build(project, chapters, List.of());
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            // Filter by style to avoid matching the TOC hyperlink entry with the same text
+            Optional<XWPFParagraph> heading = doc.getParagraphs().stream()
+                    .filter(p -> DocxHelper.STYLE_HEADING.equals(p.getStyle())
+                            && p.getText().contains("INTRODUÇÃO"))
+                    .findFirst();
+            assertThat(heading).isPresent();
+            assertThat(heading.get().getSpacingBefore())
+                    .as("chapter heading must have 480 twips (24 pt) before")
+                    .isEqualTo(DocxHelper.SPC_BEFORE_HEADING);
+            assertThat(heading.get().getSpacingAfter())
+                    .as("chapter heading must have 240 twips (12 pt) after")
+                    .isEqualTo(DocxHelper.SPC_AFTER_HEADING);
+        }
+    }
+
+    @Test
+    void sectionHeadingShouldHaveSpacingBeforeAndAfter() throws Exception {
+        Project project = buildProject();
+        Chapter intro = Chapter.builder().id(UUID.randomUUID())
+                .title("Introdução").type(ChapterType.INTRODUCTION)
+                .status(ChapterStatus.WRITING).orderIndex(1).level(1)
+                .wordCount(0).targetWordCount(2000).content("Texto.").build();
+        Chapter s1 = Chapter.builder().id(UUID.randomUUID())
+                .parent(intro).title("Contextualização").type(ChapterType.INTRODUCTION)
+                .status(ChapterStatus.WRITING).level(2).orderIndex(0).sectionOrder(1)
+                .wordCount(0).targetWordCount(2000).content("Seção.").build();
+        byte[] bytes = docxBuilder.build(project, List.of(intro, s1), List.of());
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            // Filter by style to avoid matching the TOC entry (STYLE_BODY) with the same text
+            Optional<XWPFParagraph> sectionHeading = doc.getParagraphs().stream()
+                    .filter(p -> DocxHelper.STYLE_HEADING.equals(p.getStyle())
+                            && p.getText().contains("Contextualização"))
+                    .findFirst();
+            assertThat(sectionHeading).isPresent();
+            assertThat(sectionHeading.get().getSpacingBefore())
+                    .as("section heading must have 240 twips (12 pt) before")
+                    .isEqualTo(DocxHelper.SPC_AFTER_HEADING);
+            assertThat(sectionHeading.get().getSpacingAfter())
+                    .as("section heading must have 240 twips (12 pt) after")
+                    .isEqualTo(DocxHelper.SPC_AFTER_HEADING);
+        }
+    }
+
+    // ── Cover / title page spacing — BUG-01 / BUG-02 fixes ──────────────────
+
+    @Test
+    void coverParagraphsShouldHaveExplicitZeroSpacingAfter() throws Exception {
+        Project project = buildProject();
+        byte[] bytes = docxBuilder.build(project, List.of(), List.of());
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            List<XWPFParagraph> coverParas = new ArrayList<>();
+            for (XWPFParagraph p : doc.getParagraphs()) {
+                if (p.isPageBreak()) break;
+                if (!p.getText().isBlank()) coverParas.add(p);
+            }
+            assertThat(coverParas).isNotEmpty();
+            coverParas.forEach(p ->
+                    assertThat(p.getSpacingAfter())
+                            .as("cover paragraph [" + p.getText() + "] must have explicit spacingAfter=0")
+                            .isEqualTo(0)
+            );
+        }
+    }
+
+    @Test
+    void titlePageParagraphsShouldHaveExplicitZeroSpacingAfter() throws Exception {
+        Project project = buildProject();
+        byte[] bytes = docxBuilder.build(project, List.of(), List.of());
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            List<XWPFParagraph> titlePageParas = new ArrayList<>();
+            int pageBreaks = 0;
+            for (XWPFParagraph p : doc.getParagraphs()) {
+                if (p.isPageBreak()) {
+                    pageBreaks++;
+                    if (pageBreaks == 2) break;
+                    continue;
+                }
+                if (pageBreaks == 1 && !p.getText().isBlank()) titlePageParas.add(p);
+            }
+            assertThat(titlePageParas).isNotEmpty();
+            titlePageParas.forEach(p ->
+                    assertThat(p.getSpacingAfter())
+                            .as("title page paragraph [" + p.getText() + "] must have explicit spacingAfter=0")
+                            .isEqualTo(0)
+            );
+        }
+    }
+
+    // ── Reference hanging indent ─────────────────────────────────────────────
+
+    @Test
+    void referencesShouldHaveHangingIndent() throws Exception {
+        Project project = buildProject();
+        Reference ref = buildRef(project);
+        byte[] bytes = docxBuilder.build(project, List.of(), List.of(ref));
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            Optional<XWPFParagraph> refPara = doc.getParagraphs().stream()
+                    .filter(p -> p.getText().contains("MARTIN"))
+                    .findFirst();
+            assertThat(refPara).isPresent();
+            assertThat(refPara.get().getIndentationLeft())
+                    .as("reference must have 720 twips left indent (ABNT hanging format)")
+                    .isEqualTo(DocxHelper.INDENT_REF_HANGING);
+            assertThat(refPara.get().getIndentationHanging())
+                    .as("reference must have 720 twips hanging indent (first line at margin)")
+                    .isEqualTo(DocxHelper.INDENT_REF_HANGING);
+        }
+    }
+
+    // ── All ABNT named styles ────────────────────────────────────────────────
+
+    @Test
+    void allAbntStylesShouldBeRegistered() throws Exception {
+        Project project = buildProject();
+        byte[] bytes = docxBuilder.build(project, List.of(), List.of());
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            XWPFStyles styles = doc.getStyles();
+            assertThat(styles).isNotNull();
+            List.of(DocxHelper.STYLE_BODY, DocxHelper.STYLE_HEADING,
+                    DocxHelper.STYLE_COVER_TOP, DocxHelper.STYLE_COVER_CENTER,
+                    DocxHelper.STYLE_COVER_BOTTOM, DocxHelper.STYLE_CAPTION,
+                    DocxHelper.STYLE_QUOTE, DocxHelper.STYLE_REF, DocxHelper.STYLE_TABLE)
+                    .forEach(id -> assertThat(styles.getStyle(id))
+                            .as("style '" + id + "' must be registered in the document")
+                            .isNotNull());
+        }
+    }
+
+    // ── Complete document integration ────────────────────────────────────────
+
+    @Test
+    void completeDocumentWithAllElementsShouldBuildSuccessfully() throws Exception {
+        Project project = buildProject();
+
+        Figure fig = Figure.builder().id(UUID.randomUUID()).caption("Figura de teste")
+                .mimeType("image/png").widthPercent(100)
+                .storageKey("p/f.png").originalFilename("f.png")
+                .fileSizeBytes(67L).createdAt(LocalDateTime.now()).build();
+        UUID figId = fig.getId();
+
+        AcademicTable table = AcademicTable.builder().id(UUID.randomUUID())
+                .type(AcademicTableType.TABLE).title("Dados coletados")
+                .content("| A | B |\n|---|---|\n| 1 | 2 |").build();
+        AcademicTable quadro = AcademicTable.builder().id(UUID.randomUUID())
+                .type(AcademicTableType.QUADRO).title("Categorias analíticas")
+                .content("| Cat | Def |\n|-----|-----|\n| A   | B   |").build();
+
+        Reference ref = buildRef(project);
+        Citation cite = Citation.builder().id(UUID.randomUUID())
+                .reference(ref).type(CitationType.INDIRECT)
+                .displayMode(CitationDisplayMode.PARENTHETICAL).build();
+
+        Chapter intro = chapter(project, ChapterType.INTRODUCTION, "Introdução", 1,
+                "A IA transforma o ensino [[@CITE:" + cite.getId() + "]].\n\n" +
+                "Ver [[@XREF:FIG:" + figId + "]].\n\n[[@FIG:" + figId + "]]");
+        Chapter introS1 = Chapter.builder().id(UUID.randomUUID())
+                .parent(intro).title("Contextualização").type(ChapterType.INTRODUCTION)
+                .status(ChapterStatus.WRITING).level(2).orderIndex(0).sectionOrder(1)
+                .wordCount(50).targetWordCount(2000).content("Texto da seção.").build();
+        Chapter method = chapter(project, ChapterType.METHODOLOGY, "Metodologia", 2,
+                "[[@TABLE:" + table.getId() + "]]\n\n[[@QUADRO:" + quadro.getId() + "]]");
+        Chapter refs = chapter(project, ChapterType.REFERENCES, "Referências", 3, null);
+
+        byte[] bytes = docxBuilder.build(project,
+                List.of(intro, introS1, method, refs), List.of(ref),
+                Map.of(cite.getId(), cite),
+                Map.of(figId, new LoadedFigure(fig, MINIMAL_PNG)),
+                Map.of(table.getId(), table, quadro.getId(), quadro));
+
+        assertThat(bytes).isNotNull().hasSizeGreaterThan(5000);
+
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            List<String> texts = doc.getParagraphs().stream()
+                    .map(XWPFParagraph::getText).collect(Collectors.toList());
+            assertThat(texts).anyMatch(t -> t.contains("RESUMO"));
+            assertThat(texts).anyMatch(t -> t.contains("SUMÁRIO"));
+            assertThat(texts).anyMatch(t -> t.contains("LISTA DE FIGURAS"));
+            assertThat(texts).anyMatch(t -> t.contains("LISTA DE TABELAS"));
+            assertThat(texts).anyMatch(t -> t.contains("LISTA DE QUADROS"));
+            assertThat(texts).anyMatch(t -> t.contains("INTRODUÇÃO"));
+            assertThat(texts).anyMatch(t -> t.contains("METODOLOGIA"));
+            assertThat(texts).anyMatch(t -> t.contains("REFERÊNCIAS"));
+            assertThat(doc.getTables()).hasSizeGreaterThanOrEqualTo(1);
         }
     }
 }

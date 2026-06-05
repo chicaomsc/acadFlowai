@@ -245,6 +245,10 @@ public class ChapterRenderer {
 
         // Spacing after figure block
         XWPFParagraph spacer = doc.createParagraph();
+        spacer.setStyle(DocxHelper.STYLE_BODY);
+        spacer.setSpacingBefore(0);
+        spacer.setSpacingAfter(0);
+        spacer.setIndentationFirstLine(0);
         XWPFRun spacerRun = spacer.createRun();
         DocxHelper.applyFont(spacerRun, DocxHelper.FONT_BODY, false);
         spacerRun.setText("");
