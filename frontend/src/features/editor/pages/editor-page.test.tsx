@@ -16,6 +16,7 @@ describe('editor page', () => {
 
   beforeEach(async () => {
     vi.restoreAllMocks()
+    window.localStorage.clear()
     mockDb.citations.splice(0, mockDb.citations.length, {
       id: 'citation-1',
       projectId: 'project-1',
@@ -165,7 +166,7 @@ describe('editor page', () => {
 
     expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /fundamentação teórica/i }))
+    await user.click(screen.getByRole('button', { name: /^2 fundamentação teórica\b/i }))
     expect(await screen.findByRole('heading', { name: /fundamentação teórica/i })).toBeInTheDocument()
 
     const textarea = screen.getByRole('textbox', { name: 'Editor do capítulo' })
@@ -233,10 +234,10 @@ describe('editor page', () => {
 
     expect(await screen.findByRole('heading', { name: /sumário/i })).toBeInTheDocument()
     expect(screen.getByText('1 INTRODUÇÃO')).toBeInTheDocument()
-    expect(screen.getByText('1.1 Contextualização')).toBeInTheDocument()
-    expect(screen.getByText('1.2 Problema')).toBeInTheDocument()
+    expect(screen.getAllByText('1.1 Contextualização').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1.2 Problema').length).toBeGreaterThan(0)
     expect(screen.getByText('2 FUNDAMENTAÇÃO TEÓRICA')).toBeInTheDocument()
-    expect(screen.getByText('2.1 IA')).toBeInTheDocument()
+    expect(screen.getAllByText('2.1 IA').length).toBeGreaterThan(0)
 
     unmount()
 
@@ -247,10 +248,39 @@ describe('editor page', () => {
 
     expect(await screen.findByRole('heading', { name: /sumário/i })).toBeInTheDocument()
     expect(screen.getByText('1 INTRODUÇÃO')).toBeInTheDocument()
-    expect(screen.getByText('1.1 Contextualização')).toBeInTheDocument()
-    expect(screen.getByText('1.2 Problema')).toBeInTheDocument()
+    expect(screen.getAllByText('1.1 Contextualização').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1.2 Problema').length).toBeGreaterThan(0)
     expect(screen.getByText('2 FUNDAMENTAÇÃO TEÓRICA')).toBeInTheDocument()
-    expect(screen.getByText('2.1 IA')).toBeInTheDocument()
+    expect(screen.getAllByText('2.1 IA').length).toBeGreaterThan(0)
+  })
+
+  it('torna clicáveis as entradas do sumário e navega para capítulo e seção', async () => {
+    const user = userEvent.setup()
+    await createSection('chapter-1', { title: 'Contextualização', sectionOrder: 1 })
+
+    const { unmount } = renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/toc'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /sumário/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /abrir capítulo 1 introdução/i }))
+    expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^1 introdução\b/i })).toHaveAttribute('aria-current', 'page')
+
+    unmount()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/toc'],
+    )
+
+    expect(await screen.findByRole('heading', { name: /sumário/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /abrir seção 1\.1 contextualização/i }))
+    expect(await screen.findByRole('heading', { name: /contextualização/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /1\.1 contextualização/i })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: /recolher introdução/i })).toBeInTheDocument()
   })
 
   it('cria seções em capítulos textuais e renderiza a hierarquia com numeração visual', async () => {
@@ -263,11 +293,11 @@ describe('editor page', () => {
     )
 
     expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
-    expect(screen.getByText(/1\.1 • 0 palavras/i)).toBeInTheDocument()
-    expect(screen.getByText(/2\.2 • 0 palavras/i)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /1\.1 contextualização/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /2\.2 problema de pesquisa/i })).toBeInTheDocument()
 
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /contextualização/i }))
+    await user.click(screen.getByRole('button', { name: /^1\.1 contextualização/i }))
 
     expect(await screen.findByRole('heading', { name: /contextualização/i })).toBeInTheDocument()
     expect(screen.getByText('Subseção de Introdução.')).toBeInTheDocument()
@@ -276,6 +306,87 @@ describe('editor page', () => {
       expect(await getChapter(sectionOne.id)).not.toBeNull()
       expect(await getChapter(sectionTwo.id)).not.toBeNull()
     })
+  })
+
+  it('permite recolher e expandir capítulos na navegação lateral', async () => {
+    const user = userEvent.setup()
+    await createSection('chapter-1', { title: 'Contextualização', sectionOrder: 1 })
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const chapterButton = await screen.findByRole('button', { name: /1 introdução/i })
+    expect(chapterButton).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: /1\.1 contextualização/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /recolher introdução/i }))
+
+    expect(screen.queryByRole('button', { name: /1\.1 contextualização/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /expandir introdução/i }))
+
+    expect(screen.getByRole('button', { name: /1\.1 contextualização/i })).toBeInTheDocument()
+  })
+
+  it('filtra capítulos e seções na busca lateral', async () => {
+    const user = userEvent.setup()
+    await createSection('chapter-1', { title: 'Contextualização', sectionOrder: 1 })
+    await createSection('chapter-2', { title: 'IA', sectionOrder: 1 })
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    await screen.findByRole('textbox', { name: 'Editor do capítulo' })
+    const search = await screen.findByPlaceholderText('Buscar capítulo ou seção')
+    await user.type(search, 'contextualização')
+
+    expect(await screen.findByRole('button', { name: /1\.1 contextualização/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /2 fundamentação teórica/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /2\.1 ia/i })).not.toBeInTheDocument()
+  })
+
+  it('navega para seção e destaca o item ativo', async () => {
+    const user = userEvent.setup()
+    await createSection('chapter-1', { title: 'Contextualização', sectionOrder: 1 })
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    const sectionButton = await screen.findByRole('button', { name: /1\.1 contextualização/i })
+    await user.click(sectionButton)
+
+    expect(await screen.findByRole('heading', { name: /contextualização/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /1\.1 contextualização/i })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('preserva a expansão da navegação lateral após reload', async () => {
+    const user = userEvent.setup()
+    await createSection('chapter-1', { title: 'Contextualização', sectionOrder: 1 })
+
+    const { unmount } = renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    expect(await screen.findByRole('button', { name: /1\.1 contextualização/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /recolher introdução/i }))
+    expect(screen.queryByRole('button', { name: /1\.1 contextualização/i })).not.toBeInTheDocument()
+
+    unmount()
+
+    renderWithRouter(
+      [{ path: '/editor/:projectId/:nodeId', element: <EditorPage /> }],
+      ['/editor/project-1/chapter-1'],
+    )
+
+    expect(await screen.findByRole('button', { name: /expandir introdução/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /1\.1 contextualização/i })).not.toBeInTheDocument()
   })
 
   it('permite editar o título e o conteúdo de uma seção com autosave', async () => {
@@ -349,8 +460,8 @@ describe('editor page', () => {
     )
 
     expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
-    expect(screen.getByText(/1\.1 • 0 palavras/i)).toBeInTheDocument()
-    expect(screen.getByText(/2\.2 • 0 palavras/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /1\.1 contextualização/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /2\.2 problema de pesquisa/i })).toBeInTheDocument()
 
     unmount()
 
@@ -360,8 +471,8 @@ describe('editor page', () => {
     )
 
     expect(await screen.findByRole('heading', { name: /introdução/i })).toBeInTheDocument()
-    expect(screen.getByText(/1\.1 • 0 palavras/i)).toBeInTheDocument()
-    expect(screen.getByText(/2\.2 • 0 palavras/i)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /1\.1 contextualização/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /2\.2 problema de pesquisa/i })).toBeInTheDocument()
   })
 
   it('cai para o primeiro capítulo válido quando o chapterId da rota é inválido', async () => {

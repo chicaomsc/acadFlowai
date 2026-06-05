@@ -29,19 +29,21 @@ public class SummaryRenderer {
         for (DocumentStructureBuilder.ChapterNode node : new DocumentStructureBuilder().build(chapters)) {
             Chapter chapter = node.chapter();
             if (chapter.getType() == ChapterType.REFERENCES) {
-                addEntry(doc, chapter.getTitle().toUpperCase());
+                addEntry(doc, chapter.getTitle().toUpperCase(), null);
             } else {
                 int num = chapterNumbers.getOrDefault(chapter.getId(), 0);
-                addEntry(doc, num + "  " + chapter.getTitle().toUpperCase());
+                addEntry(doc, num + "  " + chapter.getTitle().toUpperCase(),
+                        DocxHelper.bookmarkName(chapter.getId()));
                 for (Chapter section : node.sections()) {
                     String sNum = sectionNumbers.getOrDefault(section.getId(), "?");
-                    addSectionEntry(doc, sNum + "  " + section.getTitle());
+                    addSectionEntry(doc, sNum + "  " + section.getTitle(),
+                            DocxHelper.bookmarkName(section.getId()));
                 }
             }
         }
     }
 
-    private void addEntry(XWPFDocument doc, String text) {
+    private void addEntry(XWPFDocument doc, String text, String anchor) {
         XWPFParagraph p = doc.createParagraph();
         p.setStyle(DocxHelper.STYLE_BODY);
         p.setAlignment(ParagraphAlignment.LEFT);
@@ -49,12 +51,16 @@ public class SummaryRenderer {
         p.setSpacingBefore(0);
         p.setSpacingAfter(0);
         p.setIndentationFirstLine(0);
-        XWPFRun run = p.createRun();
-        DocxHelper.applyFont(run, DocxHelper.FONT_BODY, false);
-        run.setText(text);
+        if (anchor != null) {
+            DocxHelper.addHyperlinkRun(p, text, anchor);
+        } else {
+            XWPFRun run = p.createRun();
+            DocxHelper.applyFont(run, DocxHelper.FONT_BODY, false);
+            run.setText(text);
+        }
     }
 
-    private void addSectionEntry(XWPFDocument doc, String text) {
+    private void addSectionEntry(XWPFDocument doc, String text, String anchor) {
         XWPFParagraph p = doc.createParagraph();
         p.setStyle(DocxHelper.STYLE_BODY);
         p.setAlignment(ParagraphAlignment.LEFT);
@@ -63,8 +69,12 @@ public class SummaryRenderer {
         p.setSpacingAfter(0);
         p.setIndentationFirstLine(0);
         p.setIndentationLeft(DocxHelper.INDENT_PARAGRAPH);
-        XWPFRun run = p.createRun();
-        DocxHelper.applyFont(run, DocxHelper.FONT_BODY, false);
-        run.setText(text);
+        if (anchor != null) {
+            DocxHelper.addHyperlinkRun(p, text, anchor);
+        } else {
+            XWPFRun run = p.createRun();
+            DocxHelper.applyFont(run, DocxHelper.FONT_BODY, false);
+            run.setText(text);
+        }
     }
 }

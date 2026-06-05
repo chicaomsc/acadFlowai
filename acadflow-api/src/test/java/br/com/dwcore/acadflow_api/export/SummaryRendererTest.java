@@ -3,6 +3,7 @@ package br.com.dwcore.acadflow_api.export;
 import br.com.dwcore.acadflow_api.chapter.domain.Chapter;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterStatus;
 import br.com.dwcore.acadflow_api.chapter.domain.ChapterType;
+import br.com.dwcore.acadflow_api.export.docx.DocxHelper;
 import br.com.dwcore.acadflow_api.export.docx.renderer.SummaryRenderer;
 import br.com.dwcore.acadflow_api.export.template.AcademicTemplateRegistry;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
@@ -46,7 +47,7 @@ class SummaryRendererTest {
 
     private String allText(XWPFDocument doc) {
         return doc.getParagraphs().stream()
-                .map(XWPFParagraph::getText)
+                .map(DocxHelper::paragraphAllText)
                 .collect(Collectors.joining(" "));
     }
 
@@ -108,7 +109,7 @@ class SummaryRendererTest {
         renderer.render(doc, List.of(intro, sC, sA, sB));
 
         List<String> sectionEntries = doc.getParagraphs().stream()
-                .map(XWPFParagraph::getText)
+                .map(DocxHelper::paragraphAllText)
                 .filter(t -> t.contains("seção"))
                 .collect(Collectors.toList());
 
@@ -183,7 +184,7 @@ class SummaryRendererTest {
         renderer.render(doc, List.of(intro, s1));
 
         XWPFParagraph sectionPara = doc.getParagraphs().stream()
-                .filter(p -> p.getText().equals("1.1  Seção indentada"))
+                .filter(p -> DocxHelper.paragraphAllText(p).equals("1.1  Seção indentada"))
                 .findFirst().orElseThrow();
 
         assertThat(sectionPara.getIndentationLeft())
@@ -199,7 +200,7 @@ class SummaryRendererTest {
         renderer.render(doc, List.of(intro));
 
         XWPFParagraph chapterPara = doc.getParagraphs().stream()
-                .filter(p -> p.getText().equals("1  INTRODUÇÃO"))
+                .filter(p -> DocxHelper.paragraphAllText(p).equals("1  INTRODUÇÃO"))
                 .findFirst().orElseThrow();
 
         assertThat(chapterPara.getIndentationLeft())

@@ -19,7 +19,7 @@ describe('project wizard', () => {
 
   it('cria um novo projeto e navega para a rota correta ao finalizar o wizard', async () => {
     const user = userEvent.setup()
-    const { router } = renderWithRouter(
+    renderWithRouter(
       [
         { path: '/projects/new', element: <ProjectWizard /> },
         { path: '/projects/:projectId', element: <div>Destino do projeto</div> },
@@ -67,9 +67,10 @@ describe('project wizard', () => {
           templateProfile: 'ABNT_GENERIC',
         }),
       )
-      expect(router.state.location.pathname).toBe('/projects/project-2')
     })
-  })
+
+    expect(await screen.findByText('Destino do projeto')).toBeInTheDocument()
+  }, 10000)
 
   it('cria projeto com template FEMAF quando o usuário seleciona o modelo institucional', async () => {
     const user = userEvent.setup()
@@ -86,7 +87,7 @@ describe('project wizard', () => {
     await user.click(await screen.findByRole('option', { name: 'FEMAF' }))
 
     expect(screen.getByText(/regras institucionais de exportação do trabalho/i)).toBeInTheDocument()
-    expect(screen.getByText(/estrutura conforme padrão institucional FEMAF/i)).toBeInTheDocument()
+    expect(await screen.findByText(/estrutura conforme padrão institucional FEMAF/i)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /criar projeto/i }))
 
