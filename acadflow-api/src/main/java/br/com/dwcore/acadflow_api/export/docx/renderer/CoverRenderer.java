@@ -54,6 +54,7 @@ public class CoverRenderer {
         p.setAlignment(ParagraphAlignment.CENTER);
         p.setSpacingBetween(DocxHelper.SPACING_BODY, LineSpacingRule.AUTO);
         p.setSpacingBefore(spacingBefore);
+        p.setSpacingAfter(0);
         XWPFRun run = p.createRun();
         DocxHelper.applyFont(run, pts, bold);
         run.setText(text != null ? text : "");
