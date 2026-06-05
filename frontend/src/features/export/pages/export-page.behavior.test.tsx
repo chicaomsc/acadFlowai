@@ -8,6 +8,7 @@ const getActiveProjectIdMock = vi.fn()
 const setActiveProjectIdMock = vi.fn()
 const generateExportArtifactMock = vi.fn()
 const downloadExportArtifactMock = vi.fn()
+const downloadPdfExportArtifactMock = vi.fn()
 const exportStatusQueryMock = vi.fn()
 
 vi.mock('@/shared/services/active-project.service', () => ({
@@ -18,6 +19,7 @@ vi.mock('@/shared/services/active-project.service', () => ({
 vi.mock('@/shared/services/export.service', () => ({
   generateExportArtifact: (...args: unknown[]) => generateExportArtifactMock(...args),
   downloadExportArtifact: (...args: unknown[]) => downloadExportArtifactMock(...args),
+  downloadPdfExportArtifact: (...args: unknown[]) => downloadPdfExportArtifactMock(...args),
 }))
 
 vi.mock('@/features/export/services/export.service', () => ({
@@ -80,6 +82,7 @@ describe('export page behavior', () => {
     setActiveProjectIdMock.mockReset()
     generateExportArtifactMock.mockReset()
     downloadExportArtifactMock.mockReset()
+    downloadPdfExportArtifactMock.mockReset()
     exportStatusQueryMock.mockReset()
 
     exportStatusQueryMock.mockImplementation((_projectId: string | undefined, format: string) => ({
@@ -116,12 +119,12 @@ describe('export page behavior', () => {
 
     expect(await screen.findByRole('heading', { name: 'Exportação' })).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Gerar DOCX' }))
+    await user.click(screen.getByRole('button', { name: 'Exportar DOCX' }))
 
     await waitFor(() => {
       expect(screen.getByText('Não foi possível gerar a exportação')).toBeInTheDocument()
       expect(screen.getByText('Falha simulada ao exportar.')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Gerar DOCX' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Exportar DOCX' })).toBeInTheDocument()
     })
   })
 
@@ -141,14 +144,76 @@ describe('export page behavior', () => {
 
     expect(await screen.findByRole('heading', { name: 'Exportação' })).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Gerar DOCX' }))
+    await user.click(screen.getByRole('button', { name: 'Exportar DOCX' }))
     expect(await screen.findByRole('button', { name: 'Baixar DOCX' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Baixar DOCX' }))
 
     await waitFor(() => {
-      expect(screen.getByText('Não foi possível baixar o DOCX')).toBeInTheDocument()
-      expect(screen.getByText('Falha ao baixar o DOCX autenticado.')).toBeInTheDocument()
+    expect(screen.getByText('Não foi possível baixar o DOCX')).toBeInTheDocument()
+    expect(screen.getByText('Falha ao baixar o DOCX autenticado.')).toBeInTheDocument()
+    })
+  })
+
+  it('mostra o botão PDF, exporta com loading e preserva o DOCX disponível', async () => {
+    const user = userEvent.setup()
+    getActiveProjectIdMock.mockReturnValue('project-1')
+
+    let resolvePdfDownload: (() => void) | undefined
+    downloadPdfExportArtifactMock.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolvePdfDownload = resolve
+      }),
+    )
+
+    renderWithRouter([{ path: '/projects/:projectId/export', element: <ExportPage /> }], ['/projects/project-1/export'])
+
+    expect(await screen.findByRole('heading', { name: 'Exportação' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Exportar PDF' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Exportar DOCX' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Exportar PDF' }))
+    expect(screen.getByRole('button', { name: 'Exportando PDF...' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Exportar DOCX' })).toBeEnabled()
+
+    resolvePdfDownload?.()
+
+    await waitFor(() => {
+      expect(downloadPdfExportArtifactMock).toHaveBeenCalledWith('project-1', 'Projeto ativo.pdf')
+      expect(screen.getByText('Download iniciado')).toBeInTheDocument()
+      expect(screen.getByText(/O download de Projeto ativo\.pdf foi iniciado com sucesso\./)).toBeInTheDocument()
+    })
+  })
+
+  it('mostra erro amigável quando o PDF retorna falha 502', async () => {
+    const user = userEvent.setup()
+    getActiveProjectIdMock.mockReturnValue('project-1')
+    downloadPdfExportArtifactMock.mockRejectedValue(new Error('Falha ao converter documento para PDF.'))
+
+    renderWithRouter([{ path: '/projects/:projectId/export', element: <ExportPage /> }], ['/projects/project-1/export'])
+
+    expect(await screen.findByRole('heading', { name: 'Exportação' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Exportar PDF' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Não foi possível baixar o PDF')).toBeInTheDocument()
+      expect(screen.getByText('Falha ao converter documento para PDF.')).toBeInTheDocument()
+    })
+  })
+
+  it('mostra a mensagem do backend quando o PDF falha com erro informado', async () => {
+    const user = userEvent.setup()
+    getActiveProjectIdMock.mockReturnValue('project-1')
+    downloadPdfExportArtifactMock.mockRejectedValue(new Error('Preencha os metadados obrigatórios.'))
+
+    renderWithRouter([{ path: '/projects/:projectId/export', element: <ExportPage /> }], ['/projects/project-1/export'])
+
+    expect(await screen.findByRole('heading', { name: 'Exportação' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Exportar PDF' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Não foi possível baixar o PDF')).toBeInTheDocument()
+      expect(screen.getByText('Preencha os metadados obrigatórios.')).toBeInTheDocument()
     })
   })
 
@@ -189,7 +254,7 @@ describe('export page behavior', () => {
     expect(screen.getByText('Resumo em português não informado.')).toBeInTheDocument()
     expect(screen.getByText('Capítulo de metodologia ainda não possui conteúdo suficiente.')).toBeInTheDocument()
     expect(screen.getByText('Existem referências cadastradas sem citação no texto.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Gerar DOCX' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Exportar DOCX' })).toBeDisabled()
   })
 
   it('mantém PDF bloqueado mesmo quando o projeto está pronto', async () => {
@@ -202,8 +267,9 @@ describe('export page behavior', () => {
 
     await user.click(screen.getByRole('radio', { name: /pdf/i }))
 
-    expect(await screen.findByText('Formato ainda não liberado')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Gerar DOCX' })).toBeDisabled()
+    expect(await screen.findByText('Arquivo selecionado: PDF')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Exportar DOCX' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Exportar PDF' })).toBeEnabled()
     expect(generateExportArtifactMock).not.toHaveBeenCalled()
   })
 

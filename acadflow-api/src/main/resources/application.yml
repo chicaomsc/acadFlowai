@@ -38,6 +38,9 @@ app:
   figures:
     dir: ${FIGURES_DIR:${java.io.tmpdir}/acadflow/figures}
     max-size-mb: ${FIGURES_MAX_SIZE_MB:10}
+  gotenberg:
+    url: ${GOTENBERG_URL:http://localhost:3000}
+    timeout-seconds: ${GOTENBERG_TIMEOUT_SECONDS:30}
   rate-limit:
     max-requests: ${RATE_LIMIT_MAX_REQUESTS:10}
     window-ms: ${RATE_LIMIT_WINDOW_MS:60000}

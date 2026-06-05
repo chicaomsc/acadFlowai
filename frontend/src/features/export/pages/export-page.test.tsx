@@ -14,6 +14,8 @@ describe('export page', () => {
     expect(screen.getByText('Pendências atuais')).toBeInTheDocument()
     expect(screen.getByText('Existem referências cadastradas sem citação no texto.')).toBeInTheDocument()
     expect(screen.getByText('Exportando com modelo ABNT Genérico')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Exportar DOCX' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Exportar PDF' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('radio', { name: /slides/i }))
 

@@ -15,6 +15,16 @@ export interface ExportArtifact {
   generatedAt: Date
 }
 
+export class ExportDownloadError extends Error {
+  status?: number
+
+  constructor(message: string, status?: number) {
+    super(message)
+    this.name = 'ExportDownloadError'
+    this.status = status
+  }
+}
+
 interface ApiExportStatusResponse {
   projectId: string
   format: string
@@ -45,6 +55,33 @@ function resolveApiDownloadUrl(downloadUrl: string) {
   }
 
   return `${apiBaseUrl}${downloadUrl}`
+}
+
+function resolveApiResourceUrl(resource: string) {
+  const apiBaseUrl = (import.meta.env.VITE_API_URL ?? '').trim().replace(/\/+$/, '')
+  if (!apiBaseUrl) {
+    return resource.startsWith('/') ? resource : `/${resource}`
+  }
+
+  const normalizedResource = resource.startsWith('/') ? resource : `/${resource}`
+  return `${apiBaseUrl}${normalizedResource}`
+}
+
+function buildResponseErrorMessage(response: Response) {
+  return response.text().then((rawText) => {
+    const fallbackMessage = 'Não foi possível gerar o PDF. Tente novamente em instantes.'
+
+    if (!rawText.trim()) {
+      return fallbackMessage
+    }
+
+    try {
+      const parsed = JSON.parse(rawText) as { message?: string; error?: string; detail?: string }
+      return parsed.message?.trim() || parsed.error?.trim() || parsed.detail?.trim() || rawText.trim()
+    } catch {
+      return rawText.trim()
+    }
+  })
 }
 
 export async function getExportStatus(
@@ -149,6 +186,45 @@ export async function downloadExportArtifact(downloadUrl: string, fileName: stri
 
   if (!response.ok) {
     throw new Error('Não foi possível baixar o arquivo DOCX. Tente novamente em instantes.')
+  }
+
+  const blob = await response.blob()
+  const objectUrl = window.URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+
+  anchor.href = objectUrl
+  anchor.download = fileName
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  window.URL.revokeObjectURL(objectUrl)
+}
+
+export async function downloadPdfExportArtifact(projectId: string, fileName: string) {
+  const token = getSessionToken()
+  if (!token) {
+    throw new ExportDownloadError('Sua sessão expirou. Faça login novamente para baixar o arquivo.')
+  }
+
+  const response = await fetch(resolveApiResourceUrl(`/projects/${projectId}/export/pdf`), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  if (!response.ok) {
+    if (response.status === 502) {
+      throw new ExportDownloadError('Falha ao converter documento para PDF.', 502)
+    }
+
+    const backendMessage = await buildResponseErrorMessage(response)
+    throw new ExportDownloadError(
+      response.status === 400
+        ? backendMessage
+        : backendMessage || 'Não foi possível gerar o PDF. Tente novamente em instantes.',
+      response.status,
+    )
   }
 
   const blob = await response.blob()

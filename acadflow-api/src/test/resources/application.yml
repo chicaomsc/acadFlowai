@@ -13,6 +13,9 @@ app:
     dir: ${java.io.tmpdir}/acadflow/exports-test
   figures:
     dir: ${java.io.tmpdir}/acadflow/figures-test
+  gotenberg:
+    url: http://localhost:3000
+    timeout-seconds: 5
   rate-limit:
     max-requests: 1000
     window-ms: 60000
