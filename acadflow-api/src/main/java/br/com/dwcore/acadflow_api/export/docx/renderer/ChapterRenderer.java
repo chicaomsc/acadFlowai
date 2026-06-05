@@ -93,6 +93,7 @@ public class ChapterRenderer {
         Map<UUID, Integer> chapterNumbers = numbering.computeChapterNumbers(chapters);
         Map<UUID, String> sectionNumbers = numbering.computeSectionNumbers(chapters, chapterNumbers);
 
+        int bookmarkId = 0;
         DocumentStructureBuilder builder = new DocumentStructureBuilder();
         for (DocumentStructureBuilder.ChapterNode node : builder.build(chapters)) {
             Chapter chapter = node.chapter();
@@ -100,12 +101,14 @@ public class ChapterRenderer {
 
             Integer chNum = chapterNumbers.get(chapter.getId());
             DocxHelper.pageBreak(doc);
-            DocxHelper.sectionHeading(doc, chNum + "  " + chapter.getTitle());
+            XWPFParagraph headingPara = DocxHelper.sectionHeading(doc, chNum + "  " + chapter.getTitle());
+            DocxHelper.addBookmark(headingPara, DocxHelper.bookmarkName(chapter.getId()), bookmarkId++);
             renderContent(doc, chapter, citationLookup, numberedFigureLookup, numberedTableLookup, xrefLookup);
 
             for (Chapter section : node.sections()) {
                 String sNum = sectionNumbers.getOrDefault(section.getId(), "?");
-                DocxHelper.subSectionHeading(doc, sNum + "  " + section.getTitle());
+                XWPFParagraph sectionPara = DocxHelper.subSectionHeading(doc, sNum + "  " + section.getTitle());
+                DocxHelper.addBookmark(sectionPara, DocxHelper.bookmarkName(section.getId()), bookmarkId++);
                 renderContent(doc, section, citationLookup, numberedFigureLookup, numberedTableLookup, xrefLookup);
             }
         }

@@ -2,8 +2,11 @@ package br.com.dwcore.acadflow_api.export.docx;
 
 import org.apache.poi.xwpf.usermodel.*;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 import java.math.BigInteger;
+import java.util.UUID;
 
 public final class DocxHelper {
 
@@ -166,5 +169,93 @@ public final class DocxHelper {
         run.setFontFamily(FONT);
         run.setFontSize((double) pts);
         run.setBold(bold);
+    }
+
+    // ── Bookmark / hyperlink helpers ─────────────────────────────────────────
+
+    /** Stable bookmark anchor name derived from a UUID (e.g. "a_4a3f..."). */
+    public static String bookmarkName(UUID id) {
+        return "a_" + id.toString().replace("-", "");
+    }
+
+    /**
+     * Wraps {@code bookmarkStart} and {@code bookmarkEnd} around the runs of a paragraph.
+     * Inserts bookmarkStart just after {@code <w:pPr>} (before the first run) so the
+     * heading text is inside the bookmark anchor.
+     */
+    public static void addBookmark(XWPFParagraph paragraph, String name, int id) {
+        CTP ctp = paragraph.getCTP();
+        Node ctpNode = ctp.getDomNode();
+
+        // addNewBookmarkStart() appends at end — we'll move it
+        CTBookmark bkmkStart = ctp.addNewBookmarkStart();
+        bkmkStart.setId(BigInteger.valueOf(id));
+        bkmkStart.setName(name);
+
+        Node bkmkNode = bkmkStart.getDomNode();
+        ctpNode.removeChild(bkmkNode);
+
+        // Insert before the first non-pPr child
+        Node firstContent = firstNonPPrChild(ctpNode);
+        if (firstContent != null) {
+            ctpNode.insertBefore(bkmkNode, firstContent);
+        } else {
+            ctpNode.appendChild(bkmkNode);
+        }
+
+        // bookmarkEnd at the end
+        CTMarkupRange bkmkEnd = ctp.addNewBookmarkEnd();
+        bkmkEnd.setId(BigInteger.valueOf(id));
+    }
+
+    /**
+     * Appends a {@code <w:hyperlink w:anchor="...">} run directly to the paragraph XML.
+     * Text is NOT added via {@code createRun()} to avoid XmlBeans disconnection; the run
+     * lives only in the underlying XML. When the document is saved and re-opened, Word /
+     * LibreOffice / Google Docs correctly resolve the anchor link.
+     * <p>
+     * Note: {@link XWPFParagraph#getText()} will NOT return this text for in-memory
+     * documents; use {@link #paragraphAllText(XWPFParagraph)} when testing summary content.
+     */
+    public static void addHyperlinkRun(XWPFParagraph paragraph, String text, String anchor) {
+        CTHyperlink hl = paragraph.getCTP().addNewHyperlink();
+        hl.setAnchor(anchor);
+        CTR ctr = hl.addNewR();
+        CTRPr rpr = ctr.addNewRPr();
+        CTFonts fonts = rpr.addNewRFonts();
+        fonts.setAscii(FONT);
+        fonts.setHAnsi(FONT);
+        CTHpsMeasure sz = rpr.addNewSz();
+        sz.setVal(BigInteger.valueOf(FONT_BODY * 2L));
+        CTHpsMeasure szCs = rpr.addNewSzCs();
+        szCs.setVal(BigInteger.valueOf(FONT_BODY * 2L));
+        CTText ctText = ctr.addNewT();
+        ctText.setStringValue(text);
+    }
+
+    /** Extracts text from a paragraph including runs inside {@code <w:hyperlink>} elements. */
+    public static String paragraphAllText(XWPFParagraph paragraph) {
+        String direct = paragraph.getText();
+        if (!direct.isEmpty()) return direct;
+        StringBuilder sb = new StringBuilder();
+        for (CTHyperlink hl : paragraph.getCTP().getHyperlinkList()) {
+            for (CTR r : hl.getRList()) {
+                for (CTText t : r.getTArray()) {
+                    sb.append(t.getStringValue());
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private static Node firstNonPPrChild(Node ctpNode) {
+        NodeList children = ctpNode.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            String localName = children.item(i).getLocalName();
+            if (localName != null && !"pPr".equals(localName)) {
+                return children.item(i);
+            }
+        }
+        return null;
     }
 }

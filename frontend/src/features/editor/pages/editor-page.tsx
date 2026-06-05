@@ -5,6 +5,8 @@ import {
   BookOpen,
   CheckCircle2,
   CircleDashed,
+  ChevronDown,
+  ChevronRight,
   FileImage,
   FileSpreadsheet,
   LoaderCircle,
@@ -13,6 +15,7 @@ import {
   PanelRightOpen,
   Plus,
   Quote,
+  Search,
   Save,
   Sparkles,
   Trash2,
@@ -1265,6 +1268,9 @@ export function EditorPage() {
   const [sectionFeedback, setSectionFeedback] = useState<string | null>(null)
   const [sectionTitleDraft, setSectionTitleDraft] = useState('')
   const [sectionTitleSaving, setSectionTitleSaving] = useState(false)
+  const [sidebarSearch, setSidebarSearch] = useState('')
+  const [expandedChapterIds, setExpandedChapterIds] = useState<Set<string>>(() => new Set())
+  const [sidebarExpandedHydrated, setSidebarExpandedHydrated] = useState(false)
   const [deletingCitationId, setDeletingCitationId] = useState<string | null>(null)
   const [deletingFigureId, setDeletingFigureId] = useState<string | null>(null)
   const [deletingTabularElementId, setDeletingTabularElementId] = useState<string | null>(null)
@@ -1273,6 +1279,7 @@ export function EditorPage() {
   const hydratedChapterIdRef = useRef<string | null>(null)
   const saveTimeoutRef = useRef<number | null>(null)
   const chapterEditorRef = useRef<ChapterEditorHandle | null>(null)
+  const sidebarInitializedProjectRef = useRef<string | null>(null)
   const chapters = chaptersListQuery.data ?? projectQuery.data?.chapters ?? []
   const textualChapters = useMemo(
     () => chapters.filter((chapter) => chapter.type !== 'references'),
@@ -1291,6 +1298,31 @@ export function EditorPage() {
     })),
     [textualChapters, topLevelChapters],
   )
+  const sidebarStorageKey = useMemo(() => `acadflow:editor:${projectId}:sidebar-expanded`, [projectId])
+  const normalizedSidebarSearch = sidebarSearch.trim().toLowerCase()
+  const visibleChapterHierarchy = useMemo(() => {
+    if (!normalizedSidebarSearch) {
+      return chapterHierarchy.map((entry) => ({
+        ...entry,
+        sections: expandedChapterIds.has(entry.chapter.id) ? entry.sections : [],
+      }))
+    }
+
+    return chapterHierarchy.flatMap((entry) => {
+      const chapterMatches = entry.chapter.title.toLowerCase().includes(normalizedSidebarSearch)
+      const matchingSections = entry.sections.filter((section) => section.title.toLowerCase().includes(normalizedSidebarSearch))
+
+      if (chapterMatches) {
+        return [{ ...entry, sections: entry.sections }]
+      }
+
+      if (matchingSections.length > 0) {
+        return [{ ...entry, sections: matchingSections }]
+      }
+
+      return []
+    })
+  }, [chapterHierarchy, expandedChapterIds, normalizedSidebarSearch])
   const textualChapterIds = useMemo(
     () => chapterHierarchy.flatMap((entry) => [entry.chapter.id, ...entry.sections.map((section) => section.id)]),
     [chapterHierarchy],
@@ -1302,10 +1334,56 @@ export function EditorPage() {
   const chapterTabularElementsListQuery = useQuery(chapterTabularElementsQuery(selectedChapterId, projectId))
   const previousProjectIdRef = useRef<string | null>(null)
 
+  useEffect(() => {
+    if (sidebarInitializedProjectRef.current === sidebarStorageKey) return
+    if (!topLevelChapters.length) return
+
+    sidebarInitializedProjectRef.current = sidebarStorageKey
+    setSidebarExpandedHydrated(false)
+
+    if (typeof window === 'undefined') return
+
+    try {
+      const rawStoredValue = window.localStorage.getItem(sidebarStorageKey)
+      if (rawStoredValue === null) {
+        setExpandedChapterIds(new Set(topLevelChapters.map((chapter) => chapter.id)))
+        setSidebarExpandedHydrated(true)
+        return
+      }
+
+      const parsed = JSON.parse(rawStoredValue) as unknown
+      const restoredIds = Array.isArray(parsed)
+        ? parsed.filter((item): item is string => typeof item === 'string' && topLevelChapters.some((chapter) => chapter.id === item))
+        : []
+      setExpandedChapterIds(new Set(restoredIds))
+      setSidebarExpandedHydrated(true)
+    } catch {
+      setExpandedChapterIds(new Set(topLevelChapters.map((chapter) => chapter.id)))
+      setSidebarExpandedHydrated(true)
+    }
+  }, [sidebarStorageKey, topLevelChapters])
+
+  useEffect(() => {
+    if (!sidebarExpandedHydrated) return
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(sidebarStorageKey, JSON.stringify(Array.from(expandedChapterIds)))
+  }, [expandedChapterIds, sidebarExpandedHydrated, sidebarStorageKey])
+
   const selectedChapter = useMemo(
     () => selectedChapterQuery.data ?? textualChapters.find((chapter) => chapter.id === selectedChapterId) ?? topLevelChapters[0] ?? textualChapters[0] ?? null,
     [selectedChapterId, selectedChapterQuery.data, textualChapters, topLevelChapters],
   )
+  useEffect(() => {
+    if (!selectedChapter || selectedChapter.level !== 2 || !selectedChapter.parentId) return
+
+    setExpandedChapterIds((current) => {
+      if (current.has(selectedChapter.parentId as string)) return current
+      const next = new Set(current)
+      next.add(selectedChapter.parentId as string)
+      return next
+    })
+  }, [selectedChapter?.id, selectedChapter?.level, selectedChapter?.parentId])
+
   const chapterCitations = chapterCitationsListQuery.data ?? []
   const projectCitations = projectCitationsListQuery.data ?? []
   const chapterFigures = chapterFiguresListQuery.data ?? []
@@ -2178,6 +2256,21 @@ export function EditorPage() {
     navigate(`/editor/${projectId}/${getRouteNodeFromEditorNode(nextNodeId)}`)
   }
 
+  function toggleChapterExpanded(chapterId: string) {
+    setExpandedChapterIds((current) => {
+      const next = new Set(current)
+      if (next.has(chapterId)) {
+        next.delete(chapterId)
+      } else {
+        next.add(chapterId)
+      }
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(sidebarStorageKey, JSON.stringify(Array.from(next)))
+      }
+      return next
+    })
+  }
+
   async function handleSaveProjectText(target: 'abstractPt' | 'abstractEn') {
     if (abstractSaving) return
 
@@ -2766,6 +2859,18 @@ export function EditorPage() {
         <div className="border-b border-border/70 px-5 py-5">
           <p className="type-card text-foreground">{project.title}</p>
           <p className="type-meta mt-1 text-muted-foreground">Workspace documental acadêmico</p>
+          <div className="mt-4">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={sidebarSearch}
+                onChange={(event) => setSidebarSearch(event.target.value)}
+                placeholder="Buscar capítulo ou seção"
+                aria-label="Buscar capítulo ou seção"
+                className="h-11 rounded-2xl border-border/70 bg-white/80 pl-9"
+              />
+            </div>
+          </div>
         </div>
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-7 px-3 pb-5 pt-3">
@@ -2814,28 +2919,57 @@ export function EditorPage() {
               title="TEXTUAIS"
               counter={`${groupCounters.text.filter((status) => status === 'completed').length}/${groupCounters.text.length}`}
             >
-              {chapterHierarchy.map((entry) => (
+              {visibleChapterHierarchy.length > 0 ? visibleChapterHierarchy.map((entry) => {
+                const chapterProgress = Math.min(100, Math.round((entry.chapter.wordCount / getChapterTargetWords(entry.chapter)) * 100))
+                const isExpanded = expandedChapterIds.has(entry.chapter.id)
+
+                return (
                 <div key={entry.chapter.id} className="space-y-2">
-                  <DocumentNavItem
-                    title={entry.chapter.title}
-                    helper={`${getChapterDisplayNumber(entry.chapter, textualChapters)} • ${entry.chapter.wordCount} palavras`}
-                    active={activeNodeId === `chapter:${entry.chapter.id}`}
-                    status={normalizeChapterStatus(entry.chapter)}
-                    onClick={() => void handleSelectNode(`chapter:${entry.chapter.id}`)}
-                  />
-                  {entry.sections.map((section) => (
-                    <DocumentNavItem
-                      key={section.id}
-                      title={section.title}
-                      helper={`${getChapterDisplayNumber(section, textualChapters)} • ${section.wordCount} palavras`}
-                      active={activeNodeId === `chapter:${section.id}`}
-                      status={normalizeChapterStatus(section)}
-                      depth={1}
-                      onClick={() => void handleSelectNode(`chapter:${section.id}`)}
-                    />
-                  ))}
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <DocumentNavItem
+                        title={`${getChapterDisplayNumber(entry.chapter, textualChapters)} ${entry.chapter.title}`}
+                        helper={`${entry.chapter.wordCount} palavras`}
+                        active={activeNodeId === `chapter:${entry.chapter.id}`}
+                        status={normalizeChapterStatus(entry.chapter)}
+                        progress={chapterProgress}
+                        onClick={() => void handleSelectNode(`chapter:${entry.chapter.id}`)}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={isExpanded ? `Recolher ${entry.chapter.title}` : `Expandir ${entry.chapter.title}`}
+                      onClick={() => toggleChapterExpanded(entry.chapter.id)}
+                      className="mt-3 h-9 w-9 rounded-xl border border-border/70 bg-white/70 text-muted-foreground shadow-none hover:bg-white/90"
+                    >
+                      {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                  {entry.sections.map((section) => {
+                    const sectionProgress = Math.min(100, Math.round((section.wordCount / getChapterTargetWords(section)) * 100))
+
+                    return (
+                      <DocumentNavItem
+                        key={section.id}
+                        title={`${getChapterDisplayNumber(section, textualChapters)} ${section.title}`}
+                        helper={`${section.wordCount} palavras`}
+                        active={activeNodeId === `chapter:${section.id}`}
+                        status={normalizeChapterStatus(section)}
+                        progress={sectionProgress}
+                        depth={1}
+                        onClick={() => void handleSelectNode(`chapter:${section.id}`)}
+                      />
+                    )
+                  })}
                 </div>
-              ))}
+                )
+              }) : (
+                <div className="rounded-[22px] border border-dashed border-border/70 bg-white/60 px-4 py-4 text-sm leading-6 text-muted-foreground">
+                  Nenhum capítulo ou seção encontrado.
+                </div>
+              )}
             </DocumentSection>
 
             <DocumentSection
@@ -2987,17 +3121,27 @@ export function EditorPage() {
                       chapterHierarchy.map((entry) => (
                         <div key={entry.chapter.id} className="space-y-3">
                           <div className="space-y-1">
-                            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-foreground">
+                            <button
+                              type="button"
+                              className="block text-left text-sm font-semibold uppercase tracking-[0.18em] text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2"
+                              onClick={() => void handleSelectNode(`chapter:${entry.chapter.id}`)}
+                              aria-label={`Abrir capítulo ${getChapterDisplayNumber(entry.chapter, textualChapters)} ${entry.chapter.title}`}
+                            >
                               {`${entry.chapter.order} ${entry.chapter.title.toUpperCase()}`}
-                            </p>
+                            </button>
                           </div>
                           {entry.sections.length > 0 ? (
                             <div className="space-y-2 pl-4">
                               {entry.sections.map((section) => (
                                 <div key={section.id} className="flex items-start gap-3">
-                                  <p className="min-w-0 flex-1 text-sm leading-6 text-foreground">
+                                  <button
+                                    type="button"
+                                    className="min-w-0 flex-1 text-left text-sm leading-6 text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2"
+                                    onClick={() => void handleSelectNode(`chapter:${section.id}`)}
+                                    aria-label={`Abrir seção ${getChapterDisplayNumber(section, textualChapters)} ${section.title}`}
+                                  >
                                     {`${getChapterDisplayNumber(section, textualChapters)} ${section.title}`}
-                                  </p>
+                                  </button>
                                 </div>
                               ))}
                             </div>
@@ -4913,6 +5057,7 @@ function DocumentNavItem({
   onClick,
   depth = 0,
   disabled = false,
+  progress,
 }: {
   title: string
   helper: string
@@ -4921,12 +5066,14 @@ function DocumentNavItem({
   onClick?: () => void
   depth?: number
   disabled?: boolean
+  progress?: number
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      aria-current={active ? 'page' : undefined}
       className={`group relative w-full overflow-hidden rounded-[22px] border px-4 py-4 text-left transition-all duration-200 ${
         active
           ? 'border-primary/15 bg-[linear-gradient(180deg,rgba(24,53,104,0.08),rgba(24,53,104,0.03))] text-foreground shadow-sm'
@@ -4945,6 +5092,11 @@ function DocumentNavItem({
             <p className="mt-1 text-sm text-muted-foreground transition-colors group-hover:text-foreground/70">
               {helper} • {getStatusLabel(status)}
             </p>
+            {typeof progress === 'number' ? (
+              <div className="mt-3">
+                <ProgressBar value={progress} helper={`${progress}%`} />
+              </div>
+            ) : null}
           </div>
           <div
             className={`mt-1 h-2.5 w-2.5 rounded-full ${
